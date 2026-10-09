@@ -269,7 +269,7 @@ struct ConfigStoreTests {
     func envFlagsCodableRoundTrip() throws {
         let original = EnvFlags(
             syncMode: .esync, advertiseAVX: false, metalHUD: true,
-            metalFX: true, dxr: true,
+            metalFX: true, raytracing: .on, maxFPS: 60,
             extra: ["WINEDEBUG": "+seh", "CUSTOM_VAR": "1"])
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(EnvFlags.self, from: data)
@@ -287,13 +287,13 @@ struct ConfigStoreTests {
 
     @Test("EnvFlags performance vars: AVX + MetalFX/DXR when their flags are on")
     func perfFlags() {
-        let on = EnvFlags(advertiseAVX: true, metalHUD: true, metalFX: true, dxr: true).environment()
+        let on = EnvFlags(advertiseAVX: true, metalHUD: true, metalFX: true, raytracing: .on).environment()
         #expect(on["ROSETTA_ADVERTISE_AVX"] == "1")
         #expect(on["MTL_HUD_ENABLED"] == "1")
         #expect(on["D3DM_ENABLE_METALFX"] == "1")
         #expect(on["D3DM_SUPPORT_DXR"] == "1")
 
-        let off = EnvFlags(advertiseAVX: false, metalFX: false, dxr: false).environment()
+        let off = EnvFlags(advertiseAVX: false, metalFX: false, raytracing: .auto).environment()
         #expect(off["ROSETTA_ADVERTISE_AVX"] == nil)
         #expect(off["D3DM_ENABLE_METALFX"] == nil)
         #expect(off["D3DM_SUPPORT_DXR"] == nil)
@@ -301,7 +301,7 @@ struct ConfigStoreTests {
 
     @Test("MetalFX/DXR env vars are backend-specific (GPTK's D3DMetal vs DXMT)")
     func perfFlagsPerBackend() {
-        let flags = EnvFlags(metalFX: true, dxr: true)
+        let flags = EnvFlags(metalFX: true, raytracing: .on)
         // GPTK/D3DMetal: the D3DM_* vars.
         let gptk = flags.environment(graphics: .gptk)
         #expect(gptk["D3DM_ENABLE_METALFX"] == "1")
@@ -337,7 +337,7 @@ struct ConfigStoreTests {
         let old = try JSONDecoder().decode(
             EnvFlags.self, from: Data(#"{"syncMode":"msync","dxr":true,"extra":{}}"#.utf8))
         #expect(old.metalBackend == .auto)
-        #expect(old.dxr)   // the rest of the document survives
+        #expect(old.raytracing == .on)   // the rest of the document survives (legacy dxr:true → .on)
         // A value written by a NEWER OneClick (or hand-edited junk) degrades rather than wiping the config.
         let future = try JSONDecoder().decode(
             EnvFlags.self, from: Data(#"{"metalBackend":"metal5","extra":{}}"#.utf8))

@@ -44,6 +44,22 @@ public enum MetalBackendChoice: String, Codable, Sendable, CaseIterable, Identif
     }
 }
 
+/// DirectX Raytracing in D3DMetal's DX12 layer (`D3DM_SUPPORT_DXR`). Per Apple's GPTK 4.0b2 Read Me it
+/// defaults to OFF on M1/M2 and ON on M3 and later, so a plain on/off toggle could never turn it *off* on
+/// an M3+ Mac. `.auto` emits nothing (Apple's per-chip default); `.on`/`.off` pin it. GPTK only.
+public enum RaytracingChoice: String, Codable, Sendable, CaseIterable, Identifiable {
+    case auto, on, off
+
+    public var id: String { rawValue }
+    public var displayName: String {
+        switch self {
+        case .auto: "Automatic"
+        case .on: "On"
+        case .off: "Off"
+        }
+    }
+}
+
 /// Per-game performance + environment tuning applied at launch. Defaults reflect the known-good GPTK
 /// configuration for Apple Silicon (MSync + advertise-AVX).
 public struct EnvFlags: Codable, Sendable, Hashable {
@@ -57,9 +73,12 @@ public struct EnvFlags: Codable, Sendable, Hashable {
     /// MetalFX upscaling where the game supports it. The env var is backend-specific: `D3DM_ENABLE_METALFX`
     /// for GPTK/D3DMetal, `DXMT_METALFX_SPATIAL_SWAPCHAIN` for DXMT — see `environment(graphics:)`.
     public var metalFX: Bool
-    /// `D3DM_SUPPORT_DXR=1` — expose DirectX Raytracing in D3DMetal's DX12 layer. GPTK only (DXMT is
-    /// D3D10/11, no DX12), so it's emitted only for the GPTK backend.
-    public var dxr: Bool
+    /// `D3DM_SUPPORT_DXR` — DirectX Raytracing in D3DMetal's DX12 layer. GPTK only (DXMT is D3D10/11, no
+    /// DX12), so it's emitted only for the GPTK backend. See `RaytracingChoice`.
+    public var raytracing: RaytracingChoice
+    /// `D3DM_MAX_FPS=<n>` — D3DMetal's own frame cap. `nil` (or ≤ 0) emits nothing. GPTK only. A cap a little
+    /// below what the game can sustain trades peak FPS for even frame pacing.
+    public var maxFPS: Int?
     /// Which renderer D3DMetal's DX12 path uses (`D3DM_MTL4`). GPTK only, and `.auto` (the default)
     /// emits nothing — see `MetalBackendChoice`.
     public var metalBackend: MetalBackendChoice
@@ -73,7 +92,8 @@ public struct EnvFlags: Codable, Sendable, Hashable {
         advertiseAVX: Bool = true,
         metalHUD: Bool = false,
         metalFX: Bool = false,
-        dxr: Bool = false,
+        raytracing: RaytracingChoice = .auto,
+        maxFPS: Int? = nil,
         metalBackend: MetalBackendChoice = .auto,
         extra: [String: String] = [:]
     ) {
@@ -81,7 +101,8 @@ public struct EnvFlags: Codable, Sendable, Hashable {
         self.advertiseAVX = advertiseAVX
         self.metalHUD = metalHUD
         self.metalFX = metalFX
-        self.dxr = dxr
+        self.raytracing = raytracing
+        self.maxFPS = maxFPS
         self.metalBackend = metalBackend
         self.extra = extra
     }
@@ -104,8 +125,13 @@ public struct EnvFlags: Codable, Sendable, Hashable {
             case .dxvk: break   // DXVK renders through Vulkan/MoltenVK — no MetalFX upscaling hook to toggle
             }
         }
-        if dxr, graphics == .gptk { env["D3DM_SUPPORT_DXR"] = "1" }   // DX12 raytracing — GPTK only
         if graphics == .gptk {
+            switch raytracing {   // DX12 raytracing — `.auto` leaves Apple's per-chip default
+            case .auto: break
+            case .on: env["D3DM_SUPPORT_DXR"] = "1"
+            case .off: env["D3DM_SUPPORT_DXR"] = "0"
+            }
+            if let maxFPS, maxFPS > 0 { env["D3DM_MAX_FPS"] = String(maxFPS) }
             // D3DMetal's DX12 renderer. `.auto` emits nothing so Apple's own default applies (Metal 3 on
             // macOS 26, Metal 4 on 27+ with GPTK 4.0b2) — the other backends have no Metal-4 concept.
             switch metalBackend {
@@ -121,8 +147,9 @@ public struct EnvFlags: Codable, Sendable, Hashable {
     // MARK: - Codable (migrates legacy esync/msync bools; tolerates missing perf fields)
 
     private enum CodingKeys: String, CodingKey {
-        case syncMode, advertiseAVX, metalHUD, metalFX, dxr, metalBackend, extra
+        case syncMode, advertiseAVX, metalHUD, metalFX, raytracing, maxFPS, metalBackend, extra
         case esync, msync   // legacy fields from configs written before the SyncMode enum
+        case dxr            // legacy Bool from configs written before RaytracingChoice
     }
 
     public init(from decoder: Decoder) throws {
@@ -139,7 +166,14 @@ public struct EnvFlags: Codable, Sendable, Hashable {
         advertiseAVX = try c.decodeIfPresent(Bool.self, forKey: .advertiseAVX) ?? true
         metalHUD = try c.decodeIfPresent(Bool.self, forKey: .metalHUD) ?? false
         metalFX = try c.decodeIfPresent(Bool.self, forKey: .metalFX) ?? false
-        dxr = try c.decodeIfPresent(Bool.self, forKey: .dxr) ?? false
+        // Raw string so an unknown value degrades to `.auto`. A legacy `dxr: true` meant "emit =1" → `.on`;
+        // a legacy `false` emitted nothing → `.auto` (keeps the launch environment identical).
+        if let choice = (try c.decodeIfPresent(String.self, forKey: .raytracing)).flatMap(RaytracingChoice.init(rawValue:)) {
+            raytracing = choice
+        } else {
+            raytracing = (try c.decodeIfPresent(Bool.self, forKey: .dxr) ?? false) ? .on : .auto
+        }
+        maxFPS = try c.decodeIfPresent(Int.self, forKey: .maxFPS)
         // Decoded via the raw string so a value written by a NEWER OneClick (or hand-edited junk) degrades to
         // `.auto` instead of throwing and wiping the whole document — same tolerance as `ManualGame.graphics`.
         metalBackend = (try c.decodeIfPresent(String.self, forKey: .metalBackend))
@@ -153,7 +187,8 @@ public struct EnvFlags: Codable, Sendable, Hashable {
         try c.encode(advertiseAVX, forKey: .advertiseAVX)
         try c.encode(metalHUD, forKey: .metalHUD)
         try c.encode(metalFX, forKey: .metalFX)
-        try c.encode(dxr, forKey: .dxr)
+        try c.encode(raytracing, forKey: .raytracing)
+        try c.encodeIfPresent(maxFPS, forKey: .maxFPS)
         try c.encode(metalBackend, forKey: .metalBackend)
         try c.encode(extra, forKey: .extra)
     }

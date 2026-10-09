@@ -267,7 +267,7 @@ struct MakePlanTests {
     @Test("Perf env-flags (MetalHUD / MetalFX / DXR / AVX) propagate into the launch plan's environment")
     func perfFlagsPropagate() throws {
         var cfg = GameConfig(appID: 220)
-        cfg.envFlags = EnvFlags(advertiseAVX: true, metalHUD: true, metalFX: true, dxr: true)
+        cfg.envFlags = EnvFlags(advertiseAVX: true, metalHUD: true, metalFX: true, raytracing: .on)
         let plan = try LaunchOrchestrator.makePlan(
             config: cfg, backend: backend(), gameExe: gameExe, prefix: prefix, logURL: log)
         #expect(plan.environment["MTL_HUD_ENABLED"] == "1")
