@@ -18,8 +18,9 @@ unit-tested.
 
 ## M0: Manor Lords spike 🔨
 - ✅ Fork, rename to OneClick, build and test on this Mac (539 tests green).
-- ⬜ Set up on device: import GPTK 4.0 beta 2, download runtimes, create the bottle, sign in to Steam.
-- ⬜ Install Manor Lords (`steam://install/1363080`), launch it on D3DMetal with msync, and confirm the log
+- ✅ Set up on device: GPTK 4.0 beta 2 imported, runtimes downloaded, bottle created, Steam signed in.
+- ✅ Install Manor Lords (build 24905706, 14 GB).
+- ⬜ Launch it on D3DMetal with msync, and confirm the log
   shows D3DMetal (not wined3d).
 - ⬜ Measure fps with the Metal HUD at the display's resolution; tune for a steady 60 fps.
 - ⬜ Write down every step in `docs/manual-path.md`.
@@ -30,6 +31,7 @@ unit-tested.
   exe directly, alongside Steam.
 - ⬜ Preflight before every launch: Apple Silicon, macOS version, Rosetta, runtimes, GPTK, disk space.
 - ⬜ Detect native Mac Steam and ask to quit it before launching.
+- ⬜ Steam's own Play button must not start games on wined3d ("A D3D11-compatible GPU … is required").
 
 ## M2: App UI ⬜
 - ⬜ Show profile status and notes in the library and game detail.
@@ -56,6 +58,6 @@ unit-tested.
 - ⬜ Keep the engine swappable so an ARM64 Wine (CrossOver ARM64 / upstream) can replace the x86-64
   runtime. macOS 27 is the last full-Rosetta release.
 
-## Open questions
-- Engine version: highball-db lists Manor Lords as Unreal Engine 4, while the game's patch notes say it
-  moved to UE5 in 0.8.004. Check the installed files.
+## Resolved
+- Manor Lords is Unreal Engine 5.4 (UE5 since 0.8.004); highball-db's "UE4" is stale.
+- Tuning plan: [games/manor-lords.md](games/manor-lords.md).
