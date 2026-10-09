@@ -27,8 +27,8 @@ unit-tested.
 
 ## M1: Game profiles and preflight ⬜
 - ⬜ Per-game JSON profiles (field names follow highball-db): exe, launch mode, backend and fallback,
-  sync, env, args, conflicts, anti-cheat, notes, `lastVerified`. Manor Lords first: launch the Shipping
-  exe directly, alongside Steam.
+  sync, env, args, conflicts, anti-cheat, notes, `lastVerified`. Manor Lords first (normal launch;
+  the Shipping exe directly only as a fallback).
 - ⬜ Preflight before every launch: Apple Silicon, macOS version, Rosetta, runtimes, GPTK, disk space.
 - ⬜ Detect native Mac Steam and ask to quit it before launching.
 - ⬜ Steam's own Play button must not start games on wined3d ("A D3D11-compatible GPU … is required").
