@@ -35,3 +35,7 @@ dist/
 *.xcodeproj
 *.xcworkspace
 .vscode/
+
+# Per-machine toolchain overrides (see Scripts/sdk-env.sh)
+local.env
+.build

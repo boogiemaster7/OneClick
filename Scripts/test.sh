@@ -18,6 +18,11 @@ FLAGS=()
 if [ -d "$FW" ]; then
   FLAGS+=(-Xswiftc -F -Xswiftc "$FW" -Xlinker -rpath -Xlinker "$FW")
 fi
+# The TestingMacros plugin (#expect/@Test/@Suite) also sits off SwiftPM's default plugin path under CLT 27.
+PLUGINS="$DEV/usr/lib/swift/host/plugins/testing"
+if [ -d "$PLUGINS" ]; then
+  FLAGS+=(-Xswiftc -plugin-path -Xswiftc "$PLUGINS")
+fi
 if [ -d "$LIB" ]; then
   FLAGS+=(-Xlinker -rpath -Xlinker "$LIB")
 fi
