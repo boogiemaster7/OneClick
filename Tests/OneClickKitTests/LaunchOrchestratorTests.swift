@@ -1,0 +1,596 @@
+import Foundation
+import Testing
+@testable import OneClickKit
+
+@Suite("LaunchOrchestrator.makePlan (pure)")
+struct MakePlanTests {
+    let prefix = URL(fileURLWithPath: "/p/220")
+    let log = URL(fileURLWithPath: "/p/220.log")
+    let gameExe = URL(fileURLWithPath: "/lib/steamapps/common/Half-Life 2/hl2.exe")
+
+    private func backend(gptk: String? = "/w/bin/wine64") -> BackendConfig {
+        var b = BackendConfig()
+        b.wineBinaryPath = gptk.map { URL(fileURLWithPath: $0) }
+        return b
+    }
+
+    @Test("GPTK plan: bottle WINEPREFIX, sync flags, no d3d overrides without a GPTK lib dir, custom args, cwd")
+    func gptkPlan() throws {
+        var cfg = GameConfig(appID: 220)
+        cfg.envFlags = EnvFlags(syncMode: .msync)
+        cfg.customArgs = ["-dev", "-w", "1920"]
+        let plan = try LaunchOrchestrator.makePlan(
+            config: cfg, backend: backend(), gameExe: gameExe, prefix: prefix, logURL: log)
+
+        #expect(plan.executable.path == "/w/bin/wine64")
+        #expect(plan.arguments == [gameExe.path, "-dev", "-w", "1920"])
+        #expect(plan.environment["WINEPREFIX"] == "/p/220")        // the shared Steam-bottle prefix
+        #expect(plan.environment["WINEMSYNC"] == "1")          // MSync default on Apple Silicon
+        #expect(plan.environment["WINEESYNC"] == nil)          // mutually exclusive — not both
+        // GPTK injects D3DMetal; with no GPTK lib dir set here there are no d3d overrides, so
+        // WINEDLLOVERRIDES is unset (controllers work via winebus's SDL/IOHID backends, no override needed).
+        #expect(plan.environment["WINEDLLOVERRIDES"] == nil)
+        #expect(plan.environment["WINEDEBUG"] == OneClick.wineDebug)   // build-gated (verbose local / -all CI)
+        #expect(plan.currentDirectory.path == "/lib/steamapps/common/Half-Life 2")
+        #expect(plan.logURL == log)
+    }
+
+    @Test("makePlan launches the wine loader directly (no WINELOADER/WINESERVER override)")
+    func launchesLoaderDirectly() throws {
+        let plan = try LaunchOrchestrator.makePlan(
+            config: GameConfig(appID: 220), backend: backend(), gameExe: gameExe, prefix: prefix, logURL: log)
+        #expect(plan.executable.path == "/w/bin/wine64")
+        #expect(plan.environment["WINELOADER"] == nil)
+        #expect(plan.environment["WINESERVER"] == nil)
+    }
+
+    @Test("An .msi target runs via builtin msiexec /i, addressed through the Z: (unix-root) drive")
+    func msiRunsViaMsiexec() throws {
+        let msi = URL(fileURLWithPath: "/Users/me/Downloads/GravityMark 1.89.msi")
+        var cfg = GameConfig(appID: 0, presence: .none)
+        cfg.customArgs = ["/qb"]
+        let plan = try LaunchOrchestrator.makePlan(
+            config: cfg, backend: backend(), gameExe: msi, prefix: prefix, logURL: log)
+
+        #expect(plan.executable.path == "/w/bin/wine64")
+        // msiexec, not the package path directly; DOS path preserves spaces without quoting; args appended.
+        #expect(plan.arguments == ["msiexec", "/i", "Z:\\Users\\me\\Downloads\\GravityMark 1.89.msi", "/qb"])
+        #expect(plan.currentDirectory.path == "/Users/me/Downloads")
+    }
+
+    @Test("An explicit working directory overrides the exe's own folder as cwd")
+    func honorsWorkingDirectory() throws {
+        let workdir = URL(fileURLWithPath: "/lib/steamapps/common/Game")   // e.g. an installer shortcut's "start in"
+        let plan = try LaunchOrchestrator.makePlan(
+            config: GameConfig(appID: 220), backend: backend(), gameExe: gameExe,
+            workingDirectory: workdir, prefix: prefix, logURL: log)
+        #expect(plan.currentDirectory.path == "/lib/steamapps/common/Game")
+        // Absent, cwd still falls back to the exe's own folder.
+        let fallback = try LaunchOrchestrator.makePlan(
+            config: GameConfig(appID: 220), backend: backend(), gameExe: gameExe, prefix: prefix, logURL: log)
+        #expect(fallback.currentDirectory.path == "/lib/steamapps/common/Half-Life 2")
+    }
+
+    @Test("A .exe target runs directly (msi routing is inert for normal executables, any case)")
+    func exeRunsDirectly() throws {
+        let upper = URL(fileURLWithPath: "/games/Setup.EXE")
+        #expect(LaunchOrchestrator.invocation(for: upper) == ["/games/Setup.EXE"])
+        #expect(LaunchOrchestrator.invocation(for: gameExe) == [gameExe.path])
+        // Extension match is case-insensitive.
+        #expect(LaunchOrchestrator.invocation(for: URL(fileURLWithPath: "/d/x.MSI")).first == "msiexec")
+    }
+
+    @Test("Bottle launch forces msync even if the game is configured for esync (one shared wineserver)")
+    func forcesMsyncForCoResidency() throws {
+        var cfg = GameConfig(appID: 220)
+        cfg.envFlags = EnvFlags(syncMode: .esync)   // user picked ESync…
+        let plan = try LaunchOrchestrator.makePlan(
+            config: cfg, backend: backend(), gameExe: gameExe, prefix: prefix, logURL: log)
+        // …but a bottle game MUST match Steam's msync or it gets its own wineserver and loses Steamworks.
+        #expect(plan.environment["WINEMSYNC"] == "1")
+        #expect(plan.environment["WINEESYNC"] == nil)
+    }
+
+    @Test("Bottle launch forces msync even when sync vars are injected via the extra escape hatch")
+    func forcesMsyncOverExtraEscapeHatch() throws {
+        var cfg = GameConfig(appID: 220)
+        // Power user reaches past the SyncMode enum and injects sync vars directly via `extra`,
+        // which EnvFlags.environment() merges LAST — yet co-residency must still win.
+        cfg.envFlags = EnvFlags(syncMode: .msync,
+                                extra: ["WINEESYNC": "1", "WINEMSYNC": "0", "MTL_HUD_ENABLED": "1"])
+        let plan = try LaunchOrchestrator.makePlan(
+            config: cfg, backend: backend(), gameExe: gameExe, prefix: prefix, logURL: log)
+        #expect(plan.environment["WINEMSYNC"] == "1")        // forced override beats extra:["WINEMSYNC":"0"]
+        #expect(plan.environment["WINEESYNC"] == nil)        // forced override strips extra:["WINEESYNC":"1"]
+        #expect(plan.environment["MTL_HUD_ENABLED"] == "1")  // non-sync extras still survive
+    }
+
+    /// The co-residency rule is a property of the SHARED prefix, not of launching. A manual game gets its
+    /// own isolated bottle with no Steam client in it — nothing to stay in sync with — yet its settings
+    /// sheet shows the same Sync picker (`PerformanceFlagsSection`). Overriding it there made that control
+    /// silently inert.
+    @Test("An ISOLATED prefix honors the Sync picker — there's no co-resident client to protect")
+    func isolatedPrefixHonorsTheSyncPicker() throws {
+        var cfg = GameConfig(appID: 0)
+        cfg.envFlags = EnvFlags(syncMode: .esync)
+        let plan = try LaunchOrchestrator.makePlan(
+            config: cfg, backend: backend(), gameExe: gameExe, prefix: prefix, logURL: log,
+            coResidentWithSteamClient: false)
+        #expect(plan.environment["WINEESYNC"] == "1")
+        #expect(plan.environment["WINEMSYNC"] == nil)
+    }
+
+    @Test("An isolated prefix can also select no sync at all, which the shared bottle can never allow")
+    func isolatedPrefixHonorsNoSync() throws {
+        var cfg = GameConfig(appID: 0)
+        cfg.envFlags = EnvFlags(syncMode: .none)
+        let plan = try LaunchOrchestrator.makePlan(
+            config: cfg, backend: backend(), gameExe: gameExe, prefix: prefix, logURL: log,
+            coResidentWithSteamClient: false)
+        #expect(plan.environment["WINEMSYNC"] == nil)
+        #expect(plan.environment["WINEESYNC"] == nil)
+    }
+
+    /// The default must be the CONSERVATIVE answer, not the common one: over-applying msync to an isolated
+    /// prefix costs a setting, while missing it in the shared bottle silently breaks Steamworks IPC. A new
+    /// launch path that forgets the parameter has to fail that way round.
+    @Test("Omitting the co-residency parameter defaults to enforcing msync (fails safe)")
+    func coResidencyDefaultsToEnforced() throws {
+        var cfg = GameConfig(appID: 220)
+        cfg.envFlags = EnvFlags(syncMode: .esync)
+        let plan = try LaunchOrchestrator.makePlan(
+            config: cfg, backend: backend(), gameExe: gameExe, prefix: prefix, logURL: log)
+        #expect(plan.environment["WINEMSYNC"] == "1")
+        #expect(plan.environment["WINEESYNC"] == nil)
+    }
+
+    @Test("GPTK plan with GPTK configured: D3DMetal resolves from the RUNTIME's lib/external, no WINEDLLPATH")
+    func gptkPlanD3DMetalWiring() throws {
+        let cfg = GameConfig(appID: 220)
+        var b = backend()   // wine binary = /w/bin/wine64 → runtime root /w
+        b.gptkLibDirPath = URL(fileURLWithPath: "/g/lib/wine/x86_64-windows")
+        let plan = try LaunchOrchestrator.makePlan(
+            config: cfg, backend: b, gameExe: gameExe, prefix: prefix, logURL: log)
+
+        // After the overlay, GPTK's libd3dshared.dylib + D3DMetal.framework live in the WINE runtime's
+        // own lib/external (/w/lib/external) — that must lead the DYLD paths, ahead of the bundled deps.
+        #expect(plan.environment["DYLD_FALLBACK_LIBRARY_PATH"]?.hasPrefix("/w/lib/external:") == true)
+        #expect(plan.environment["DYLD_FALLBACK_LIBRARY_PATH"]?.contains("/silo-bundled") == true)
+        #expect(plan.environment["DYLD_FALLBACK_FRAMEWORK_PATH"] == "/w/lib/external")
+        // Modules live in wine's own lib/wine now (overlaid), so there is NO WINEDLLPATH; the translated
+        // d3d modules are just forced to builtin so GPTK's overlaid versions win.
+        #expect(plan.environment["WINEDLLPATH"] == nil)
+        #expect(plan.environment["WINEDLLOVERRIDES"] == "d3d9,d3d10,d3d10_1,d3d10core,d3d11,d3d12,d3d12core,dxgi,nvapi64,nvngx=b")
+    }
+
+    @Test("DXMT plan: winemetal/d3d builtin overrides, and NO lib/external DYLD path (winemetal links system Metal)")
+    func dxmtPlan() throws {
+        let cfg = GameConfig(appID: 220)
+        var b = backend()   // wine binary = /w/bin/wine64 → runtime root /w
+        b.dxmtLibDirPath = URL(fileURLWithPath: "/d/lib/wine/x86_64-windows")
+        let plan = try LaunchOrchestrator.makePlan(
+            config: cfg, backend: b, graphics: .dxmt, gameExe: gameExe, prefix: prefix, logURL: log)
+
+        // DXMT forces ITS module set (incl. its winemetal Metal bridge) to builtin — D3D10/11 only, no d3d12.
+        #expect(plan.environment["WINEDLLOVERRIDES"] == "d3d9,d3d10,d3d10_1,d3d10core,d3d11,dxgi,winemetal=b;nvapi64,nvngx=")
+        // Unlike GPTK, DXMT ships no framework in lib/external — winemetal.so links the system Metal.framework
+        // — so makePlan must NOT prepend /w/lib/external; the base bundled-deps DYLD path is left intact.
+        #expect(plan.environment["DYLD_FALLBACK_FRAMEWORK_PATH"] == nil)
+        #expect(plan.environment["DYLD_FALLBACK_LIBRARY_PATH"]?.hasPrefix("/w/lib/external:") == false)
+        #expect(plan.environment["DYLD_FALLBACK_LIBRARY_PATH"]?.contains("/silo-bundled") == true)
+    }
+
+    @Test("DXVK plan: d3d9/10/11 native overrides + its OWN MoltenVK leading the DYLD path, no lib/external")
+    func dxvkPlan() throws {
+        let cfg = GameConfig(appID: 220)
+        var b = backend()   // wine binary = /w/bin/wine64 → runtime root /w
+        b.dxvkLibDirPath = URL(fileURLWithPath: "/x/lib/wine/x86_64-windows")
+        let plan = try LaunchOrchestrator.makePlan(
+            config: cfg, backend: b, graphics: .dxvk, gameExe: gameExe, prefix: prefix, logURL: log)
+
+        // Native DXVK forces ITS d3d9/10core/11 + its own dxgi to native (=n) — the sole DirectX 9 path.
+        #expect(plan.environment["WINEDLLOVERRIDES"] == "d3d9,d3d10core,d3d11,dxgi=n;nvapi64,nvngx=")
+        // The Vulkan driver is picked by dyld NAME lookup (an absolute CX_LIBVULKAN is ignored — verified
+        // on-device), so DXVK's OWN MoltenVK dir must LEAD the fallback path, ahead of wine's bundled stock
+        // one (which can't create a D3D device at any feature level).
+        let dyld = try #require(plan.environment["DYLD_FALLBACK_LIBRARY_PATH"])
+        #expect(dyld.hasPrefix("/x/lib:"))                      // <dxvk>/lib — where its libMoltenVK.dylib lives
+        #expect(dyld.contains("/silo-bundled"))                 // wine's own bundle still follows
+        #expect(dyld.range(of: "/x/lib")!.lowerBound < dyld.range(of: "/silo-bundled")!.lowerBound)
+        // DXVK ships no framework in lib/external, so no /w/lib/external prepend.
+        #expect(plan.environment["DYLD_FALLBACK_FRAMEWORK_PATH"] == nil)
+        #expect(plan.environment["DYLD_FALLBACK_LIBRARY_PATH"]?.hasPrefix("/w/lib/external:") == false)
+        // Left alone DXVK writes its logs + shader cache into the GAME FOLDER (verified on-device); both are
+        // redirected — logs to OneClick's log dir, the state cache into the prefix (so it survives a reinstall).
+        #expect(plan.environment["DXVK_LOG_PATH"] == log.deletingLastPathComponent().path)
+        #expect(plan.environment["DXVK_STATE_CACHE_PATH"] == prefix.appendingPathComponent("dxvk-cache").path)
+    }
+
+    @Test("Only DXVK gets the DXVK log/cache redirection — GPTK and DXMT plans stay clean")
+    func dxvkEnvIsBackendScoped() throws {
+        let cfg = GameConfig(appID: 220)
+        var b = backend()
+        b.gptkLibDirPath = URL(fileURLWithPath: "/g/lib/wine/x86_64-windows")
+        b.dxmtLibDirPath = URL(fileURLWithPath: "/d/lib/wine/x86_64-windows")
+        for graphics in [GraphicsBackend.gptk, .dxmt] {
+            let plan = try LaunchOrchestrator.makePlan(
+                config: cfg, backend: b, graphics: graphics, gameExe: gameExe, prefix: prefix, logURL: log)
+            #expect(plan.environment["DXVK_LOG_PATH"] == nil)
+            #expect(plan.environment["DXVK_STATE_CACHE_PATH"] == nil)
+        }
+    }
+
+    @Test("An unconfigured DXVK leaks no d3d overrides and no DXVK MoltenVK path (falls back to plain wined3d)")
+    func dxvkUnconfigured() throws {
+        let cfg = GameConfig(appID: 220)
+        let plan = try LaunchOrchestrator.makePlan(
+            config: cfg, backend: backend(), graphics: .dxvk, gameExe: gameExe, prefix: prefix, logURL: log)
+        #expect(plan.environment["WINEDLLOVERRIDES"] == nil)
+        #expect(plan.environment["DYLD_FALLBACK_LIBRARY_PATH"]?.hasPrefix("/x/lib") != true)
+    }
+
+    @Test("Determinism: selecting DXMT never leaks GPTK's overrides, even when GPTK is the configured backend")
+    func backendSelectionIsDeterministic() throws {
+        let cfg = GameConfig(appID: 220)
+        var b = backend()
+        b.gptkLibDirPath = URL(fileURLWithPath: "/g/lib/wine/x86_64-windows")  // GPTK configured…
+        // …but the launch asks for DXMT, which is NOT configured → no d3d overrides at all (plain wined3d),
+        // and crucially NOT GPTK's. The backend can only ever resolve to its own overlay.
+        let plan = try LaunchOrchestrator.makePlan(
+            config: cfg, backend: b, graphics: .dxmt, gameExe: gameExe, prefix: prefix, logURL: log)
+        #expect(plan.environment["WINEDLLOVERRIDES"] == nil)
+        #expect(plan.environment["DYLD_FALLBACK_FRAMEWORK_PATH"] == nil)
+    }
+
+    @Test("User WINEDEBUG via extra flags is preserved")
+    func customWineDebug() throws {
+        var cfg = GameConfig(appID: 220)
+        cfg.envFlags = EnvFlags(extra: ["WINEDEBUG": "+seh,+tid"])
+        let plan = try LaunchOrchestrator.makePlan(
+            config: cfg, backend: backend(), gameExe: gameExe, prefix: prefix, logURL: log)
+        #expect(plan.environment["WINEDEBUG"] == "+seh,+tid")
+    }
+
+    @Test("GPTK appends its d3d overrides to a user's pre-existing WINEDLLOVERRIDES (semicolon-merged, not clobbered)")
+    func mergesPreExistingWineDllOverrides() throws {
+        var cfg = GameConfig(appID: 220)
+        // Power user forces their own DLL override via the extra escape hatch, WITH GPTK configured.
+        cfg.envFlags = EnvFlags(extra: ["WINEDLLOVERRIDES": "winemenubuilder.exe=d"])
+        var b = backend()
+        b.gptkLibDirPath = URL(fileURLWithPath: "/g/lib/wine/x86_64-windows")
+        let plan = try LaunchOrchestrator.makePlan(
+            config: cfg, backend: b, gameExe: gameExe, prefix: prefix, logURL: log)
+        // GPTK's d3d overrides are APPENDED (semicolon-joined), not overwriting the user's.
+        #expect(plan.environment["WINEDLLOVERRIDES"] == "winemenubuilder.exe=d;d3d9,d3d10,d3d10_1,d3d10core,d3d11,d3d12,d3d12core,dxgi,nvapi64,nvngx=b")
+    }
+
+    @Test("Perf env-flags (MetalHUD / MetalFX / DXR / AVX) propagate into the launch plan's environment")
+    func perfFlagsPropagate() throws {
+        var cfg = GameConfig(appID: 220)
+        cfg.envFlags = EnvFlags(advertiseAVX: true, metalHUD: true, metalFX: true, dxr: true)
+        let plan = try LaunchOrchestrator.makePlan(
+            config: cfg, backend: backend(), gameExe: gameExe, prefix: prefix, logURL: log)
+        #expect(plan.environment["MTL_HUD_ENABLED"] == "1")
+        #expect(plan.environment["D3DM_ENABLE_METALFX"] == "1")
+        #expect(plan.environment["D3DM_SUPPORT_DXR"] == "1")
+        #expect(plan.environment["ROSETTA_ADVERTISE_AVX"] == "1")
+        #expect(plan.environment["D3DM_MTL4"] == nil)   // metalBackend defaults to .auto → Apple decides
+    }
+
+    @Test("A pinned Metal backend reaches the launch environment as D3DM_MTL4")
+    func metalBackendReachesPlan() throws {
+        var cfg = GameConfig(appID: 220)
+        cfg.envFlags = EnvFlags(metalBackend: .metal3)
+        let plan = try LaunchOrchestrator.makePlan(
+            config: cfg, backend: backend(), gameExe: gameExe, prefix: prefix, logURL: log)
+        #expect(plan.environment["D3DM_MTL4"] == "0")
+
+        // The `extra` escape hatch still wins over the picker, all the way through makePlan.
+        cfg.envFlags = EnvFlags(metalBackend: .metal3, extra: ["D3DM_MTL4": "1"])
+        let overridden = try LaunchOrchestrator.makePlan(
+            config: cfg, backend: backend(), gameExe: gameExe, prefix: prefix, logURL: log)
+        #expect(overridden.environment["D3DM_MTL4"] == "1")
+    }
+
+    @Test("Throws wineNotConfigured when no wine binary is available")
+    func notConfigured() {
+        let cfg = GameConfig(appID: 220)
+        #expect(throws: LaunchOrchestrator.LaunchError.wineNotConfigured) {
+            try LaunchOrchestrator.makePlan(
+                config: cfg, backend: backend(gptk: nil),
+                gameExe: gameExe, prefix: prefix, logURL: log)
+        }
+    }
+
+    @Test("logHeader dumps the resolved launch context (exe, args, cwd, env sorted)")
+    func logHeader() throws {
+        let plan = LaunchPlan(
+            executable: URL(fileURLWithPath: "/rt/bin/wine64"),
+            arguments: ["/g/Foo/Foo.exe", "-windowed"],
+            environment: ["WINEPREFIX": "/b/Steam", "WINEMSYNC": "1", "WINEDLLOVERRIDES": "d3d11=b"],
+            currentDirectory: URL(fileURLWithPath: "/g/Foo"),
+            logURL: URL(fileURLWithPath: "/logs/foo.log"))
+        let header = plan.logHeader(at: Date(timeIntervalSince1970: 0))
+        #expect(header.contains("exe   : /rt/bin/wine64"))
+        #expect(header.contains("args  : /g/Foo/Foo.exe -windowed"))
+        #expect(header.contains("cwd   : /g/Foo"))
+        #expect(header.contains("WINEPREFIX=/b/Steam"))
+        #expect(header.contains("WINEDLLOVERRIDES=d3d11=b"))
+        #expect(header.contains("begin process output"))
+        // env is sorted alphabetically: WINEDLLOVERRIDES < WINEMSYNC < WINEPREFIX
+        let dll = try #require(header.range(of: "WINEDLLOVERRIDES"))
+        let pre = try #require(header.range(of: "WINEPREFIX"))
+        #expect(dll.lowerBound < pre.lowerBound)
+    }
+}
+
+@Suite("LaunchOrchestrator.launch (pipeline)")
+struct LaunchPipelineTests {
+
+    @Test("Overlays GPTK into the wine runtime + spawns the game detached into the shared bottle prefix")
+    func fullPipeline() async throws {
+        let tmp = try TempDir(); defer { tmp.cleanup() }
+        let paths = AppPaths(supportDir: tmp.url.appendingPathComponent("OneClick"))
+        let fake = FakeProcessRunner()
+        let orchestrator = LaunchOrchestrator(runner: fake, linker: GraphicsLinker())
+
+        // A fake wine runtime + GPTK runtime, a fake install tree with the exe, and the shared bottle prefix.
+        let wine = try tmp.write("wine/bin/wine64", "#!/bin/sh")
+        try tmp.makeDir("wine/lib/wine/x86_64-windows")
+        try tmp.makeDir("wine/lib/wine/x86_64-unix")
+        let gptkLibDir = try tmp.makeDir("gptk/lib/wine/x86_64-windows")
+        try tmp.write("gptk/lib/wine/x86_64-windows/d3d11.dll", "D3DMETAL-PE")
+        let gptkUnix = try tmp.makeDir("gptk/lib/wine/x86_64-unix")
+        try FileManager.default.createSymbolicLink(
+            atPath: gptkUnix.appendingPathComponent("d3d11.so").path,
+            withDestinationPath: "../../external/libd3dshared.dylib")
+        try tmp.write("gptk/lib/external/libd3dshared.dylib", "DYLIB")
+        let lib = try tmp.makeDir("lib")
+        try tmp.write("lib/steamapps/common/Half-Life 2/hl2.exe", "MZ")
+        let prefix = try tmp.makeDir("bottle")
+
+        var backend = BackendConfig()
+        backend.wineBinaryPath = wine
+        backend.gptkLibDirPath = gptkLibDir
+
+        let app = SteamApp(appID: 220, name: "HL2", installDir: "Half-Life 2",
+                           stateFlags: .fullyInstalled, sizeOnDisk: 1, libraryPath: lib)
+        var cfg = GameConfig(appID: 220)
+        cfg.executableRelativePath = "hl2.exe"
+
+        let pid = try await orchestrator.launchInBottle(
+            app: app, config: cfg, backend: backend, graphics: .gptk, prefix: prefix,
+            logURL: paths.log(forAppID: 220))
+        #expect(pid == 4242)
+
+        // GPTK overlaid into the wine RUNTIME (not the prefix): wine now carries GPTK's d3d11.dll.
+        let overlaid = wine.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("lib/wine/x86_64-windows/d3d11.dll")
+        #expect(try String(contentsOf: overlaid, encoding: .utf8) == "D3DMETAL-PE")
+
+        // The detached spawn used the shared (bottle) prefix and the resolved exe.
+        let spawn = try #require(fake.invocations.last { $0.detached })
+        #expect(spawn.environment["WINEPREFIX"] == prefix.path)
+        #expect(spawn.executable.path == wine.path)
+        #expect(spawn.arguments == [lib.appendingPathComponent("steamapps/common/Half-Life 2/hl2.exe").path])
+    }
+
+    @Test("Throws executableNotFound when no exe can be resolved")
+    func noExecutable() async throws {
+        let tmp = try TempDir(); defer { tmp.cleanup() }
+        let paths = AppPaths(supportDir: tmp.url.appendingPathComponent("OneClick"))
+        let fake = FakeProcessRunner()
+        let orchestrator = LaunchOrchestrator(runner: fake, linker: GraphicsLinker())
+
+        var backend = BackendConfig()
+        backend.wineBinaryPath = URL(fileURLWithPath: "/w/wine64")
+        let app = SteamApp(appID: 9, name: "X", installDir: "Nope",
+                           stateFlags: .fullyInstalled, sizeOnDisk: 1,
+                           libraryPath: tmp.url)   // install dir doesn't exist → no exe
+        await #expect(throws: LaunchOrchestrator.LaunchError.self) {
+            try await orchestrator.launchInBottle(
+                app: app, config: GameConfig(appID: 9), backend: backend, graphics: .gptk,
+                prefix: tmp.url, logURL: paths.log(forAppID: 9))
+        }
+    }
+
+    @Test("launchManualGame spawns the absolute .exe into the bottle prefix (no Steam presence)")
+    func manualGameLaunch() async throws {
+        let tmp = try TempDir(); defer { tmp.cleanup() }
+        let fake = FakeProcessRunner()
+        let orchestrator = LaunchOrchestrator(runner: fake, linker: GraphicsLinker())
+        var backend = BackendConfig()
+        backend.wineBinaryPath = URL(fileURLWithPath: "/w/wine64")
+        let exe = try tmp.write("Games/My Game/game.exe", "MZ")
+        let prefix = try tmp.makeDir("bottle")
+        let game = ManualGame(name: "My Game", executablePath: exe, customArgs: ["-windowed"])
+
+        let pid = try await orchestrator.launchManualGame(
+            game, backend: backend, graphics: .gptk, prefix: prefix,
+            logURL: tmp.url.appendingPathComponent("m.log"))
+        #expect(pid == 4242)
+
+        let spawn = try #require(fake.invocations.last { $0.detached })
+        #expect(spawn.executable.path == "/w/wine64")
+        #expect(spawn.arguments == [exe.path, "-windowed"])         // absolute exe + custom args
+        #expect(spawn.environment["WINEPREFIX"] == prefix.path)     // co-located in the shared bottle
+        #expect(spawn.environment["WINEMSYNC"] == "1")
+        // No steam_appid.txt next to the exe — manual games don't use Steamworks.
+        #expect(!FileManager.default.fileExists(atPath: exe.deletingLastPathComponent()
+            .appendingPathComponent("steam_appid.txt").path))
+    }
+
+    /// A minimal valid PE with the given COFF machine type (0x014c = i386, 0x8664 = amd64).
+    private func makePE(machine: UInt16) -> Data { PEFixture.header(machine: machine) }
+
+    @Test("Refuses a 32-bit game on GPTK (64-bit-only), but allows the same exe on DXMT")
+    func refuses32BitOnGPTK() async throws {
+        let tmp = try TempDir(); defer { tmp.cleanup() }
+        let fake = FakeProcessRunner()
+        let orchestrator = LaunchOrchestrator(runner: fake, linker: GraphicsLinker())
+        var backend = BackendConfig(); backend.wineBinaryPath = URL(fileURLWithPath: "/w/wine64")
+        try tmp.makeDir("Games/OC2")
+        let exe = tmp.url.appendingPathComponent("Games/OC2/oc2.exe")
+        try makePE(machine: 0x014c).write(to: exe)                       // a real 32-bit (i386) PE
+        let game = ManualGame(name: "OC2", executablePath: exe, graphics: .gptk)
+        let log = tmp.url.appendingPathComponent("m.log")
+
+        // GPTK refuses it up front (D3DMetal is 64-bit-only) — no spawn.
+        await #expect {
+            try await orchestrator.launchManualGame(game, backend: backend, graphics: .gptk, prefix: tmp.url, logURL: log)
+        } throws: { error in
+            if case LaunchOrchestrator.LaunchError.unsupported32BitOnGPTK = error { true } else { false }
+        }
+        #expect(fake.invocations.isEmpty)                                // refused before spawning
+
+        // DXMT (32-bit-capable) does NOT refuse it — it spawns.
+        let pid = try await orchestrator.launchManualGame(
+            game, backend: backend, graphics: .dxmt, prefix: tmp.url, logURL: log)
+        #expect(pid == 4242)
+    }
+
+    @Test("Does NOT refuse a 64-bit game on GPTK")
+    func allows64BitOnGPTK() async throws {
+        let tmp = try TempDir(); defer { tmp.cleanup() }
+        let fake = FakeProcessRunner()
+        let orchestrator = LaunchOrchestrator(runner: fake, linker: GraphicsLinker())
+        var backend = BackendConfig(); backend.wineBinaryPath = URL(fileURLWithPath: "/w/wine64")
+        try tmp.makeDir("Games/G")
+        let exe = tmp.url.appendingPathComponent("Games/G/g.exe")
+        try makePE(machine: 0x8664).write(to: exe)                       // 64-bit (amd64) PE
+        let game = ManualGame(name: "G", executablePath: exe, graphics: .gptk)
+
+        let pid = try await orchestrator.launchManualGame(
+            game, backend: backend, graphics: .gptk, prefix: tmp.url, logURL: tmp.url.appendingPathComponent("m.log"))
+        #expect(pid == 4242)
+    }
+
+    @Test("launchManualGame under DXMT overlays DXMT into the runtime and forces its builtin d3d overrides")
+    func manualGameDXMT() async throws {
+        let tmp = try TempDir(); defer { tmp.cleanup() }
+        let fake = FakeProcessRunner()
+        let orchestrator = LaunchOrchestrator(runner: fake, linker: GraphicsLinker())
+
+        // A fake wine runtime + a DXMT runtime source tree (PE d3d11 + winemetal.so bridge).
+        let wine = try tmp.write("wine/bin/wine64", "#!/bin/sh")
+        try tmp.makeDir("wine/lib/wine/x86_64-windows")
+        try tmp.makeDir("wine/lib/wine/x86_64-unix")
+        let dxmtLibDir = try tmp.makeDir("dxmt/lib/wine/x86_64-windows")
+        try tmp.write("dxmt/lib/wine/x86_64-windows/d3d11.dll", "DXMT-PE")
+        try tmp.makeDir("dxmt/lib/wine/x86_64-unix")
+        try tmp.write("dxmt/lib/wine/x86_64-unix/winemetal.so", "WINEMETAL")
+        let exe = try tmp.write("Games/Old/old.exe", "MZ")
+        let prefix = try tmp.makeDir("bottle")
+
+        var backend = BackendConfig()
+        backend.wineBinaryPath = wine
+        backend.dxmtLibDirPath = dxmtLibDir
+
+        let game = ManualGame(name: "Old", executablePath: exe)
+        let pid = try await orchestrator.launchManualGame(
+            game, backend: backend, graphics: .dxmt, prefix: prefix,
+            logURL: tmp.url.appendingPathComponent("m.log"))
+        #expect(pid == 4242)
+
+        // DXMT overlaid into the wine RUNTIME (its d3d11 now carries DXMT's bytes).
+        let overlaid = wine.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("lib/wine/x86_64-windows/d3d11.dll")
+        #expect(try String(contentsOf: overlaid, encoding: .utf8) == "DXMT-PE")
+
+        let spawn = try #require(fake.invocations.last { $0.detached })
+        #expect(spawn.environment["WINEDLLOVERRIDES"] == "d3d9,d3d10,d3d10_1,d3d10core,d3d11,dxgi,winemetal=b;nvapi64,nvngx=")
+        #expect(spawn.environment["WINEPREFIX"] == prefix.path)
+    }
+
+    @Test("launchManualGame throws when the .exe is missing")
+    func manualGameMissingExe() async throws {
+        let tmp = try TempDir(); defer { tmp.cleanup() }
+        let orchestrator = LaunchOrchestrator(runner: FakeProcessRunner(), linker: GraphicsLinker())
+        var backend = BackendConfig()
+        backend.wineBinaryPath = URL(fileURLWithPath: "/w/wine64")
+        let game = ManualGame(name: "Gone", executablePath: tmp.url.appendingPathComponent("nope.exe"))
+        await #expect(throws: LaunchOrchestrator.LaunchError.self) {
+            try await orchestrator.launchManualGame(
+                game, backend: backend, graphics: .gptk, prefix: tmp.url,
+                logURL: tmp.url.appendingPathComponent("m.log"))
+        }
+    }
+
+    @Test("launchInBottle rejects an executableRelativePath that climbs out of the install dir")
+    func rejectsPathEscapingRelativeExe() async throws {
+        let tmp = try TempDir(); defer { tmp.cleanup() }
+        let orchestrator = LaunchOrchestrator(runner: FakeProcessRunner(), linker: GraphicsLinker())
+        var backend = BackendConfig()
+        backend.wineBinaryPath = URL(fileURLWithPath: "/w/wine64")
+        let app = SteamApp(appID: 220, name: "HL2", installDir: "HL2",
+                           stateFlags: .fullyInstalled, sizeOnDisk: 1, libraryPath: tmp.url)
+        var cfg = GameConfig(appID: 220)
+        cfg.executableRelativePath = "../../escape.exe"           // path traversal out of the install dir
+        await #expect(throws: LaunchOrchestrator.LaunchError.self) {
+            try await orchestrator.launchInBottle(
+                app: app, config: cfg, backend: backend, graphics: .gptk, prefix: tmp.url,
+                logURL: tmp.url.appendingPathComponent("x.log"))
+        }
+    }
+
+    @Test("runInstaller runs the installer BLOCKING (not detached) in the bottle prefix")
+    func installerRun() async throws {
+        let tmp = try TempDir(); defer { tmp.cleanup() }
+        let fake = FakeProcessRunner()
+        let orchestrator = LaunchOrchestrator(runner: fake, linker: GraphicsLinker())
+        var backend = BackendConfig()
+        backend.wineBinaryPath = URL(fileURLWithPath: "/w/wine64")
+        let installer = try tmp.write("setup.exe", "MZ")
+        let prefix = try tmp.makeDir("bottle")
+
+        _ = try await orchestrator.runInstaller(
+            exe: installer, backend: backend, prefix: prefix, logURL: tmp.url.appendingPathComponent("i.log"))
+        // Blocking (`run`, not `spawnDetached`) so the caller learns when the install finished.
+        let run = try #require(fake.lastInvocation)
+        #expect(run.detached == false)
+        #expect(run.arguments == [installer.path])
+        #expect(run.environment["WINEPREFIX"] == prefix.path)
+    }
+}
+
+@Suite("ExecutableResolver")
+struct ExecutableResolverTests {
+
+    @Test("Auto-detects the largest exe, preferring the install-dir name")
+    func autodetect() throws {
+        let tmp = try TempDir(); defer { tmp.cleanup() }
+        let game = try tmp.makeDir("Game")
+        try tmp.write("Game/redist/vcredist.exe", "x")             // small
+        try tmp.write("Game/Game.exe", String(repeating: "B", count: 5000))  // matches dir name
+        let exe = ExecutableResolver.firstExecutable(in: game)
+        #expect(exe?.lastPathComponent == "Game.exe")
+    }
+
+    @Test("Returns nil when no exe exists")
+    func none() throws {
+        let tmp = try TempDir(); defer { tmp.cleanup() }
+        let dir = try tmp.makeDir("Empty")
+        #expect(ExecutableResolver.firstExecutable(in: dir) == nil)
+    }
+
+    @Test("A bundled redistributable never wins the size tie-break, even when it's the biggest exe")
+    func redistNeverWinsOnSize() throws {
+        let tmp = try TempDir(); defer { tmp.cleanup() }
+        let game = try tmp.makeDir("Some Game")   // dir name does NOT match the exe → size decides
+        // Exactly the real Steam layout: a ~25 MB VC redist dwarfs the actual game binary. Picking it would
+        // poison BOTH the bitness read (wrong backend) and the D3DProfile scan rooted at its directory.
+        try tmp.write("Some Game/_CommonRedist/vcredist/VC_redist.x64.exe", String(repeating: "R", count: 50_000))
+        try tmp.write("Some Game/UEPrereqSetup_x64.exe", String(repeating: "P", count: 40_000))
+        try tmp.write("Some Game/Binaries/Win64/Shipping.exe", String(repeating: "G", count: 5_000))
+        #expect(ExecutableResolver.firstExecutable(in: game)?.lastPathComponent == "Shipping.exe")
+    }
+
+    @Test("Fails OPEN: an install containing only redist-looking exes still resolves one")
+    func redistFilterFailsOpen() throws {
+        let tmp = try TempDir(); defer { tmp.cleanup() }
+        let game = try tmp.makeDir("Odd")
+        try tmp.write("Odd/vcredist_x64.exe", String(repeating: "R", count: 100))
+        // Better to launch something the user can re-point than to resolve nothing at all.
+        #expect(ExecutableResolver.firstExecutable(in: game)?.lastPathComponent == "vcredist_x64.exe")
+    }
+}

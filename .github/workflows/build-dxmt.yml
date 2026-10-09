@@ -1,7 +1,7 @@
 name: Build DXMT (older-games backend)
 
-# Self-reliant DXMT pipeline: build 3Shain's DXMT (the Metal D3D10/11 layer Silo overlays as the GPTK
-# fallback) from its upstream source against Silo's CrossOver Wine, and publish it to this repo's
+# Self-reliant DXMT pipeline: build 3Shain's DXMT (the Metal D3D10/11 layer OneClick overlays as the GPTK
+# fallback) from its upstream source against OneClick's CrossOver Wine, and publish it to this repo's
 # Releases — so the app never depends on a third-party prebuilt that may go stale.
 #
 # We pin the EXACT DXMT version CrossOver 26 bundles and build it against the matching CrossOver Wine
@@ -188,19 +188,19 @@ jobs:
             echo "[binaries]"
             echo "c = ['/usr/bin/clang', '-arch', 'x86_64']"
             echo "cpp = ['/usr/bin/clang++', '-arch', 'x86_64']"
-          } > silo-osx.txt
+          } > oneclick-osx.txt
           # Cross toolchain (llvm-mingw) is absolute in build-win64.txt and llvm@15 is via
           # -Dnative_llvm_path, so keep them AFTER the system dirs on PATH (system clang/ld/ar win).
           export PATH="$PATH:$DXMT_SRC/toolchains/$MINGW_DIR/bin:$LLVM15/bin"
           # -Dwine_builtin_dll=true: all dlls (d3d + winemetal) install to <arch>-windows as BUILTIN — the
-          # layout Silo overlays (v0.72 defaults false, dropping d3d in system32 as native).
+          # layout OneClick overlays (v0.72 defaults false, dropping d3d in system32 as native).
           # Build BOTH ABIs into the SAME install prefix so 32-bit games (e.g. Overcooked 2) get DXMT too:
           # win64 → install/x86_64-windows (+ x86_64-unix/winemetal.so), win32 → install/i386-windows. Wine
           # auto-selects the tree by the game's PE machine type; the i386 PE winemetal.dll thunks into the
           # shared host-arch x86_64-unix/winemetal.so (new-WoW64), so 32-bit ships no unix .so of its own.
           build_abi() {  # $1 = cross-file, $2 = build dir
             $ARCH_PREFIX meson setup \
-              --cross-file "$1" --native-file silo-osx.txt \
+              --cross-file "$1" --native-file oneclick-osx.txt \
               -Dnative_llvm_path="$LLVM15" \
               -Dwine_install_path="$WINE_INSTALL" \
               -Dwine_builtin_dll=true \
@@ -243,4 +243,4 @@ jobs:
           files: |
             dxmt.tar.xz
             dxmt.tar.xz.sha256
-          body: "DXMT ${{ env.DXMT_VER }} (${{ env.DXMT_REPO }}) built against this repo's CrossOver Wine (${{ env.WINE_TAG }}) — the older-games D3D10/11 backend. In Silo: Settings → DXMT → Download Latest (or import the extracted x86_64-windows folder)."
+          body: "DXMT ${{ env.DXMT_VER }} (${{ env.DXMT_REPO }}) built against this repo's CrossOver Wine (${{ env.WINE_TAG }}) — the older-games D3D10/11 backend. In OneClick: Settings → DXMT → Download Latest (or import the extracted x86_64-windows folder)."

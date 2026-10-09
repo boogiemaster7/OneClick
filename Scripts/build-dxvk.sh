@@ -2,9 +2,9 @@
 # Build DXVK from source (doitsujin/dxvk) → native d3d9/d3d10core/d3d11/dxgi PE dlls for BOTH ABIs, then
 # upload as a GitHub Release asset. (Same recipe as .github/workflows/build-dxvk.yml — use whichever is easier.)
 #
-# DXVK is Silo's DirectX 9 translator AND the broad compatibility fallback below GPTK/DXMT: D3D9/10/11 →
+# DXVK is OneClick's DirectX 9 translator AND the broad compatibility fallback below GPTK/DXMT: D3D9/10/11 →
 # Vulkan → the wine runtime's already-bundled MoltenVK → Metal. Built STOCK from upstream (no patches) and
-# shipped as NATIVE dlls — Silo seeds them into the game prefix's system32/syswow64 and overrides them `=n`
+# shipped as NATIVE dlls — OneClick seeds them into the game prefix's system32/syswow64 and overrides them `=n`
 # (GraphicsLinker.installDXVKPrefixLoaders), running on the base wine runtime with nothing overlaid into
 # lib/wine. DXVK is NOT Wine, so constraint #8 (Wine = CrossOver-FOSS only) is unaffected. Never a prebuilt.
 #
@@ -14,7 +14,7 @@
 # Output: dist/dxvk.tar.xz holding **lib/wine/{x86_64,i386}-windows** + **lib/libMoltenVK.dylib** — DXVK's
 # D3D9/10/11 + its own dxgi for 64-bit and 32-bit games (wine auto-selects per game by PE machine type; the
 # i386 tree runs 32-bit DirectX 9 titles, which neither GPTK nor DXMT can), plus the Vulkan driver DXVK runs
-# on. In Silo → Settings → DXVK → Import, point at the extracted lib/wine/x86_64-windows folder
+# on. In OneClick → Settings → DXVK → Import, point at the extracted lib/wine/x86_64-windows folder
 # (installDXVKPrefixLoaders picks up the i386-windows sibling; the launch puts `<dxvk>/lib` first on
 # DYLD_FALLBACK_LIBRARY_PATH so THIS MoltenVK is the driver). Do NOT commit the tarball — attach to a Release.
 #
@@ -42,12 +42,12 @@ set +a
 
 VER="${1:-$DXVK_VERSION}"
 # Per-wine tag (matches CI): DXVK is wine-independent, but we tag by the CrossOver wine it's validated with,
-# mirroring the dxmt-<ver>-cx<ver> scheme so Silo can match a DXVK release to the installed wine.
+# mirroring the dxmt-<ver>-cx<ver> scheme so OneClick can match a DXVK release to the installed wine.
 TAG="${2:-dxvk-$VER-cx$CROSSOVER_VERSION}"
 MINGW_DIR="llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-macos-universal"
 WORK="$ROOT/.dxvk-build"
 SRC="$WORK/dxvk"
-WANT_DLLS=(d3d9.dll d3d10core.dll d3d11.dll dxgi.dll)   # what Silo seeds (isDXVKModule); d3d8/d3d10 wrapper dropped
+WANT_DLLS=(d3d9.dll d3d10core.dll d3d11.dll dxgi.dll)   # what OneClick seeds (isDXVKModule); d3d8/d3d10 wrapper dropped
 
 echo "==> Preflight (meson, ninja, glslangValidator — no Metal toolchain / Wine install needed)"
 for tool in meson ninja glslangValidator; do
@@ -69,8 +69,8 @@ cd "$SRC"
 # and the game renders a black screen with working audio. Measured on-device 2026-08-04 against Alien Swarm
 # and Double Action: Boogaloo (both Source, both 32-bit): 3 and 6 failed pipelines before, **0 after**.
 # CrossOver has the same defect; this is not upstream-fixable without a newer MoltenVK (DXVK 2.x needs
-# Vulkan 1.3, MoltenVK 1.2.10 offers 1.2), so Silo carries the patch. It costs hardware shadow compare.
-echo "==> Apply Silo's D3D9/MoltenVK shadow-sampler patch"
+# Vulkan 1.3, MoltenVK 1.2.10 offers 1.2), so OneClick carries the patch. It costs hardware shadow compare.
+echo "==> Apply OneClick's D3D9/MoltenVK shadow-sampler patch"
 git apply --verbose "$ROOT/Scripts/patches/dxvk-d3d9-moltenvk-shadow-sampler.patch" \
   || { echo "ERROR: patch failed — re-derive it against DXVK $VER"; exit 1; }
 
@@ -90,7 +90,7 @@ echo "==> Configure + build (release), both ABIs, into clean prefixes"
 rm -rf build.w64 build.w32 install64 install32
 # Take DXVK's DEFAULT enabled targets (dxgi/d3d9/d3d10/d3d11 — and d3d8, which we just don't ship) rather than
 # passing -Denable_* flags, so this stays robust across DXVK versions that add/rename those options. We
-# cherry-pick the dlls Silo seeds after install. `meson install` drops the PE dlls in <prefix>/bin.
+# cherry-pick the dlls OneClick seeds after install. `meson install` drops the PE dlls in <prefix>/bin.
 build_abi() {  # $1 = DXVK cross-file, $2 = build dir, $3 = install prefix
   meson setup --cross-file "$1" --buildtype release --prefix "$SRC/$3" "$2"
   ninja -C "$2"
@@ -103,7 +103,7 @@ build_abi build-win32.txt build.w32 install32
 # MoltenVK at lib/libMoltenVK.dylib. Load-bearing on BOTH sides: `RuntimeManager.locateDXVKLibDir` requires
 # that MoltenVK sibling (wine ships d3d9+d3d11 in the same layout, so without it every Wine install is
 # detected as DXVK), and `URL.dxvkMoltenVKDir` walks up exactly two levels from the module dir to find it.
-echo "==> Assemble the Silo layout (lib/wine/{x86_64,i386}-windows + lib/libMoltenVK.dylib)"
+echo "==> Assemble the OneClick layout (lib/wine/{x86_64,i386}-windows + lib/libMoltenVK.dylib)"
 rm -rf out; mkdir -p out/lib/wine/x86_64-windows out/lib/wine/i386-windows
 locate_dll() { find "$1" -name "$2" -type f 2>/dev/null | head -1; }   # robust to bin/ vs other install layout
 for dll in "${WANT_DLLS[@]}"; do
@@ -112,7 +112,7 @@ for dll in "${WANT_DLLS[@]}"; do
   [ -n "$s32" ] && cp "$s32" "out/lib/wine/i386-windows/$dll"
 done
 
-echo "==> Verify the artifacts Silo seeds (GraphicsLinker.installDXVKPrefixLoaders)"
+echo "==> Verify the artifacts OneClick seeds (GraphicsLinker.installDXVKPrefixLoaders)"
 missing=""
 for dir in out/lib/wine/x86_64-windows out/lib/wine/i386-windows; do
   for f in "${WANT_DLLS[@]}"; do [ -e "$dir/$f" ] || missing="$missing $dir/$f"; done
@@ -180,7 +180,7 @@ mkdir -p "$ROOT/dist"
 ( cd out && tar -cJf "$ROOT/dist/dxvk.tar.xz" lib )
 ( cd "$ROOT/dist" && shasum -a 256 dxvk.tar.xz > dxvk.tar.xz.sha256 )
 echo "Built: $ROOT/dist/dxvk.tar.xz (+ .sha256)"
-echo "Import in Silo (Settings → DXVK → Import…): <extracted>/lib/wine/x86_64-windows"
+echo "Import in OneClick (Settings → DXVK → Import…): <extracted>/lib/wine/x86_64-windows"
 echo
 echo "Publish BOTH as Release assets (NOT committed to git):"
 echo "  gh release create $TAG \"$ROOT/dist/dxvk.tar.xz\" \"$ROOT/dist/dxvk.tar.xz.sha256\" -t \"$TAG\" -n \"DXVK $VER (validated with CrossOver Wine $CROSSOVER_VERSION)\""

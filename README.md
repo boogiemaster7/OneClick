@@ -1,143 +1,110 @@
 <div align="center">
 
-# Silo
+# OneClick
 
-**A fast, native way to run Windows Steam games on Apple-silicon Macs.**
+**Double-click a game icon on your Mac. Play the Windows Steam version.**
 
-100% SwiftUI · Apple GPTK4/D3DMetal + DXMT graphics
+Apple Silicon · macOS 15+ · SwiftUI · Apple D3DMetal + DXMT + DXVK
 
-[![Latest release](https://img.shields.io/github/v/release/mikaelhug/Silo)](https://github.com/mikaelhug/Silo/releases)
-![Platform](https://img.shields.io/badge/platform-macOS%2015%2B%20%C2%B7%20Apple%20Silicon-blue)
-![Swift](https://img.shields.io/badge/Swift%206-strict%20concurrency-orange)
-[![License](https://img.shields.io/badge/license-LGPL--2.1+-blue)](LICENSE)
-
-[Discord](https://discord.gg/kNysBA9VU5) ·
-[Website](https://mikaelhug.github.io/Silo/) ·
-[Releases](https://github.com/mikaelhug/Silo/releases) ·
-[Architecture](CLAUDE.md) ·
-[Wine build](WINE-BUILD.md) ·
-[Status](STATUS.md)
-
-<img src="docs/images/dashboard.png" width="820" alt="Silo library — a grid of installed Steam games (Bloons TD 6, Bloons TD Battles 2, It Takes Two, Overcooked 2, Split Fiction, Victoria 3), each with cover art, install size, a per-game graphics-backend badge (Automatic, GPTK, or DXMT), and a Play button" />
+[Architecture](docs/ARCHITECTURE.md) ·
+[Roadmap](docs/ROADMAP.md) ·
+[Wine build](docs/WINE-BUILD.md) ·
+[License](LICENSE)
 
 </div>
 
-Silo stands up a real **Windows Steam client inside one shared Wine bottle**, and launches your games
-**co-resident with it** on a Metal graphics backend it picks automatically — Apple's D3DMetal, or DXMT for
-titles it can't run — so Steamworks and Steam DRM just work, no emulator, no fakery. It downloads its own
-Wine, imports Apple's Game Porting Toolkit from your `.dmg`, and self-updates from GitHub Releases.
+OneClick is a launcher for Windows Steam games on Apple-silicon Macs. It runs a real **Windows Steam
+client inside one shared Wine bottle** and launches each game **next to it**, on the fastest Metal graphics
+backend that works for that game. Steamworks and Steam DRM work normally, with no emulators and no
+patched game files. You sign in to Steam once, and it stays signed in.
 
-## Highlights
+Each game can get its own **`<Game>.app` on your Desktop or in Launchpad**. Double-click it and OneClick
+starts Steam if needed and launches the game in the right bottle with the right graphics backend.
 
-- **Real Steam, real DRM.** Steamworks IPC is prefix-scoped, so Silo runs each game in the same
-  bottle as a logged-in Windows Steam client — auth tickets, ownership, and online features intact.
-  Sign in once; Steam caches the login.
-- **Automatic graphics backend.** All Steam games share **one** bottle, and Silo picks the Metal backend
-  per game: **GPTK / D3DMetal** (Apple's D3D10/11/12 → Metal) by default, **DXMT** (a direct D3D10/11 →
-  Metal layer) for 32-bit titles and as the fallback when GPTK can't drive a game — it remembers the switch
-  for next time. Override to a specific backend per game whenever you want; GPTK and DXMT games co-reside.
-- **Non-Steam games too.** Add any `.exe` (or run its installer); each manual game lives in its
-  **own isolated Wine prefix** with the same **Automatic** graphics backend as Steam games (or an
-  explicit override), plus per-game env flags and launch options.
-- **Desktop shortcuts.** Right-click any game (Steam or non-Steam) → *Create Desktop Shortcut* for a
-  double-clickable launcher that plays it through Silo — same backend, same bottle, Steam client and all —
-  straight from the Desktop, Spotlight, or Launchpad.
-- **Self-contained.** No Homebrew, no external dependencies: Wine comes from Silo's Releases
-  (SHA-256 verified, fail-closed), GPTK from your Apple-downloaded `.dmg`, updates in-app.
-- **Native and event-driven.** SwiftUI + Swift 6 strict concurrency; zero polling — game exits,
-  Steam readiness, and log tailing are all kqueue-driven. Bottles are relocatable to an external
-  drive (with a progress bar; exFAT refused).
-- **Guardrails everywhere.** A silent GPTK→wined3d fallback is detected and surfaced instead of a
-  black window; a corrupt `config.json` restores from its automatic backup; a bottles move or
-  self-update is refused while a game or Steam client is live (and won't run over a process orphaned
-  by a prior crash); launch logs open with the fully resolved environment.
+**First target: Manor Lords** (Steam app 1363080, DirectX 12, no anti-cheat), tuned for a steady 60 fps.
+OneClick is early: see the [Roadmap](docs/ROADMAP.md) for what is verified so far.
 
 ## How it works
 
-1. **Bottle** — provision **one** shared Wine prefix, install Windows Steam into it, and launch it with
-   the CEF flags that make its UI actually paint under Wine. Every Steam game runs co-resident here.
-2. **Discovery** — parse the bottle's `appmanifest_*.acf` (+ `libraryfolders.vdf`) into typed games.
-3. **Backend choice** — per launch, Silo picks GPTK or DXMT (32-bit → DXMT, else GPTK) or honors your
-   per-game override; a silent GPTK failure flips an Automatic game to DXMT for next time.
-4. **Graphics overlay** — inject the chosen backend's modules into the Wine **runtime**'s own `lib/wine`
-   tree (GPTK in place; DXMT on an APFS clone of the runtime), forced builtin at launch so nothing can
-   shadow them. Idempotent, self-repairing.
-5. **Launch** — resolve `(game, backend) → {prefix, runtime}` through one deterministic dispatch point
-   (`BottleResolver`) and spawn the game co-resident with its Steam client, streaming to a per-game log.
+```
+Wine (x86-64, under Rosetta 2)
+  └─ D3DMetal (Apple GPTK: DX11/12 → Metal)  ·  DXMT (DX10/11 → Metal)  ·  DXVK (DX9/10/11 → Vulkan → Metal)
+       └─ Windows Steam client in a shared prefix
+            └─ the game's .exe, launched alongside Steam
+```
 
-Silo builds, tests, and browses a library with **zero runtimes installed** — everything
-runtime-dependent degrades to a guided setup state, never a crash.
+1. **Bottle.** One shared Wine prefix with Windows Steam, its fonts and the VC++ runtimes.
+2. **Discovery.** Installed games are read from Steam's `appmanifest_*.acf` and `libraryfolders.vdf`.
+3. **Backend choice.** OneClick picks GPTK, DXMT or DXVK per game from the DirectX imports of the game and
+   its DLLs. If a backend silently falls back to Wine's slow wined3d renderer, OneClick notices and
+   switches.
+4. **Launch.** Each game runs in the same bottle as Steam, with its own environment and a per-game log.
+
+Everything OneClick installs lives under `~/Library/Application Support/OneClick/`. Delete that folder
+to uninstall.
 
 ## First-run setup
 
-The Library shows a guided setup until the pieces are in place:
+1. **Import GPTK.** Download Apple's Game Porting Toolkit `.dmg` from
+   [developer.apple.com/games](https://developer.apple.com/games/game-porting-toolkit/) (free Apple ID)
+   and pick it in OneClick. OneClick copies out the D3DMetal layer. Apple's license does not allow
+   redistributing it, so OneClick never downloads it for you.
+2. **Set up.** One click installs Rosetta 2 if needed, downloads the Wine runtime and graphics layers
+   (SHA-256 verified), installs Windows Steam into the bottle, and opens it so you can sign in.
 
-1. **Import GPTK** — pick Apple's Game Porting Toolkit `.dmg`
-   ([developer.apple.com/games](https://developer.apple.com/games/game-porting-toolkit/), free
-   Apple ID required); Silo mounts it and extracts the D3DMetal layer.
-2. **Set up** — one click chains the rest: download Wine (~250 MB) and the DXMT runtime from
-   [Releases](https://github.com/mikaelhug/Silo/releases), install Windows Steam into the shared bottle
-   (with its fonts and VC++ runtimes), then launch Steam and sign in once — Steam caches the login.
+Then press **Play**, or create a desktop app for the game.
 
-Then hit **Play**. Steam games default to **Automatic** graphics (GPTK/DXMT chosen per game, overridable in
-per-game settings, which also cover the executable, performance flags — msync, Metal HUD, MetalFX,
-raytracing, and D3DMetal's Metal 3 / Metal 4 renderer — and launch options). Settings (⌘,) manages
-Wine/GPTK/DXMT runtime versions (import as many GPTKs as you like and switch the default in one click),
-bottle tools
-(Retina mode, winecfg/regedit), bottle location, and updates.
+> **Mac Steam:** running the native macOS Steam client at the same time can crash games or show
+> "NO CONNECTION". Quit it before playing (an automatic check is on the [Roadmap](docs/ROADMAP.md), M1).
 
-> **Gatekeeper:** the app is ad-hoc signed, so a downloaded build is quarantined until you
-> right-click → Open (or `xattr -dr com.apple.quarantine Silo.app`).
+> **Gatekeeper:** builds are ad-hoc signed. On first launch, right-click → **Open** (or run
+> `xattr -dr com.apple.quarantine OneClick.app`).
 
 ## Build from source
 
-Requires a Swift 6 toolchain — **Command Line Tools are sufficient, no Xcode needed**.
+A Swift 6 toolchain is enough. Command Line Tools work; full Xcode is not required.
 
 ```sh
-swift build              # compile
-./Scripts/test.sh        # test suite — passes with no Wine/GPTK/Steam installed
-./Scripts/build-app.sh   # assemble + ad-hoc sign dist/Silo.app
+./Scripts/test.sh        # test suite; passes with no Wine/GPTK/Steam installed
+./Scripts/build-app.sh   # assemble + ad-hoc sign dist/OneClick.app
 ./Scripts/run.sh         # build the app and open it
-./Scripts/dev.sh         # fast iteration: swift run silo
+./Scripts/dev.sh         # fast iteration: swift run oneclick
 ```
 
-`Scripts/test.sh` wraps `swift test` with the Swift Testing search path Command Line Tools needs
-(plain `swift test` fails with "no such module 'Testing'" without Xcode).
+On a Mac with only the Command Line Tools, create `local.env` with `MACOS_SDK_VERSION=26.5` first. See
+[Build environment](docs/ARCHITECTURE.md#build-environment) for why. Every version number lives in
+`versions.env`.
 
-### Local Wine without GitHub
+### Wine sourcing
 
-Pushing only powers the CI Wine build. To exercise the whole app locally:
+Wine is built **only from CrossOver's open-source (LGPL) code** (`Scripts/build-wine.sh`,
+`.github/workflows/build-wine.yml`). DXMT and DXVK are built from their upstream sources against that Wine.
+Until this repository's CI publishes its own runtimes, the app downloads the identical from-source builds
+published by Silo (`RUNTIME_GITHUB_REPO` in `versions.env`). See [docs/WINE-BUILD.md](docs/WINE-BUILD.md).
 
-```sh
-./Scripts/build-wine.sh 26.2.0                # ~30–60 min, from CrossOver source
-./Scripts/install-local-wine.sh .wine-build/install wine-cx-26.2.0
-```
+## Ground rules
 
-Then in the app: Settings → **Wine** → Set default, **GPTK** → import your `.dmg`, and the
-Library onboarding's **Set up Steam bottle** runs everything else locally. Building DXMT
-additionally needs full Xcode's Metal toolchain — see `Scripts/build-dxmt.sh`.
+- **No game files, ever.** You install games from your own Steam account with the real Steam client.
+  OneClick ships and downloads no game files, cracks, repacks or Steam emulators.
+- **No D3DMetal redistribution.** GPTK is always imported from your own Apple download.
+- **No kernel anti-cheat titles.** Games that need it are flagged as unsupported.
 
-CI runs build + test on every push; tagging `v*` publishes an ad-hoc-signed `Silo.zip` (with its
-`.sha256`) via `release.yml`. Every version number lives in one file, `versions.env`.
+## Credits
 
-## Wine sourcing
+- **[Silo](https://github.com/mikaelhug/Silo)** by Mikael Hug: OneClick is a fork of Silo, and its
+  bottle, backend and launch engine are Silo's work.
+- **[CodeWeavers](https://www.codeweavers.com/crossover/source)**, for publishing CrossOver's Wine source.
+- **[DXMT](https://github.com/3Shain/dxmt)** by 3Shain, **[DXVK](https://github.com/doitsujin/dxvk)** and
+  **[MoltenVK](https://github.com/KhronosGroup/MoltenVK)**.
+- **Apple**, for the [Game Porting Toolkit](https://developer.apple.com/games/game-porting-toolkit/) and
+  D3DMetal.
+- **[highball-db](https://github.com/gauthierpiarrette/highball-db)** (CC0), for game compatibility
+  data.
 
-Silo's Wine is compiled **from CrossOver's open (LGPL) sources in Silo's own CI** and published to
-its Releases — no third-party prebuilt dependency, reproducible from `versions.env`. DXMT is built
-from its upstream (`3Shain/dxmt`), pinned in `versions.env`, against that same Wine. Apple's D3DMetal
-is imported from the user's GPTK `.dmg` (Apple-login-gated, so it is never auto-downloaded). See
-[WINE-BUILD.md](WINE-BUILD.md).
+## License
 
-## Sandboxing
+[LGPL-2.1-or-later](LICENSE), as inherited from Silo. Wine is redistributed under the LGPL from
+CrossOver's published sources. GPTK remains your own Apple-licensed download. You are responsible for
+complying with the Steam Subscriber Agreement and applicable law.
 
-Silo is **not** App-Sandboxed (see `Resources/silo.entitlements`): it executes `wine` outside its
-bundle and reads/writes `~/Library/Application Support` and the bottles, which the sandbox forbids.
-User-chosen paths go through the system file picker (powerbox) to avoid TCC denials.
-
-## Legal
-
-Silo is licensed under the [LGPL-2.1-or-later](LICENSE). Wine is redistributed under the same
-license from CrossOver's published sources; GPTK stays your own Apple-licensed download. Silo never
-bundles or auto-downloads a Steam-API emulator — games talk to the real Steam client you sign into,
-in your own account. You are responsible for compliance with Steam's Subscriber Agreement and
-applicable law.
+OneClick is not affiliated with Valve, Apple, CodeWeavers, Slavic Magic or Hooded Horse.

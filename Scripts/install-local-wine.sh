@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install a Wine build into Silo's Runtimes dir for LOCAL testing — no GitHub release / push needed.
+# Install a Wine build into OneClick's Runtimes dir for LOCAL testing — no GitHub release / push needed.
 # Afterwards the app's Wine Manager → Wine tab lists it; set it as default and you're ready.
 #
 # Usage: Scripts/install-local-wine.sh <wine-dir-or-tarball> [name]
@@ -12,7 +12,7 @@ set -euo pipefail
 
 SRC="${1:?usage: install-local-wine.sh <wine-dir-or-tarball> [name]}"
 NAME="${2:-wine-local}"
-DEST="$HOME/Library/Application Support/Silo/Runtimes/$NAME"
+DEST="$HOME/Library/Application Support/OneClick/Runtimes/$NAME"
 
 # Validate the SOURCE before touching the destination (so a bad arg never leaves an empty runtime).
 if [ ! -e "$SRC" ]; then
@@ -43,7 +43,7 @@ if find "$DEST" \( -name wine64 -o -name wine \) -type f 2>/dev/null | grep -q .
   "$(dirname "$0")/bundle-wine-dylibs.sh" "$DEST" || echo "(warning: dylib bundling failed — wine may need Homebrew deps)"
   echo "Installed Wine '$NAME' for local testing:"
   echo "  $DEST"
-  echo "Open Silo → Wine Manager → Wine tab → Set default."
+  echo "Open OneClick → Wine Manager → Wine tab → Set default."
 else
   rm -rf "$DEST"   # don't leave an empty/garbage runtime behind
   echo "ERROR: no wine64/wine binary found under the source — nothing installed. Check '$SRC'."

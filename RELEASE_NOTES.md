@@ -1,12 +1,11 @@
-# Silo 0.5.0
+# OneClick 0.1.0
 
-Silo now runs on macOS 27.
+First OneClick build, forked from Silo 0.5.0.
 
-- **Setup no longer fails with "Bad CPU type in executable."** Silo's Wine runtime needs Rosetta 2, and a clean macOS 27 install doesn't come with it. Onboarding now has an "Install Rosetta 2" step when it's missing, and an existing library asks to install it. No admin password is needed.
-- **Built with Xcode 27 against the macOS 27 SDK.**
-
-Thanks for [reporting it](https://github.com/mikaelhug/Silo/issues/7)!
+- Renamed to OneClick: app, bundle IDs (`com.oneclick.*`), the `oneclick://` link scheme, and the data folder (`~/Library/Application Support/OneClick/`).
+- The app updates from this repository's Releases; the Wine, DXMT and DXVK runtimes still come from Silo's published from-source builds.
+- Builds and tests on a Mac with only the Command Line Tools.
 
 ---
 
-Silo downloads its own Wine (built from CrossOver's FOSS source in CI) and imports Apple's GPTK from your `.dmg`. Runs on macOS 15+ on Apple Silicon. Gatekeeper: the build is ad-hoc signed, so right-click → **Open** on first launch (or `xattr -dr com.apple.quarantine Silo.app`).
+OneClick downloads its own Wine (built from CrossOver's open-source code) and imports Apple's GPTK from your `.dmg`. Runs on macOS 15+ on Apple Silicon. Gatekeeper: the build is ad-hoc signed, so right-click → **Open** on first launch (or `xattr -dr com.apple.quarantine OneClick.app`).

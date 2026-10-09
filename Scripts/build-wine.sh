@@ -3,7 +3,7 @@
 # (Same recipe as .github/workflows/build-wine.yml — use whichever is easier.)
 #
 # The result is a ~250 MB wine.tar.xz. Do NOT commit it into git — attach it to a Release with the
-# `gh release` command printed at the end. The app downloads it from Silo.wineRepo's Releases.
+# `gh release` command printed at the end. The app downloads it from OneClick.wineRepo's Releases.
 #
 # We build Wine ONLY. GPTK/D3DMetal is Apple-licensed and is imported in-app from the user's .dmg.
 #
@@ -82,9 +82,9 @@ WRAPPER="$WORK/install/share/silo/steamwebhelper-wrapper.exe"
 python3 "$ROOT/Scripts/check-webhelper-wrapper.py" "$WRAPPER"
 
 echo "==> Bundle dependency dylibs (self-contained runtime)"
-# SILO_SDL_DYLIB tells the bundler to ship our pinned libSDL2 (winebus dlopens it by leaf name from
+# ONECLICK_SDL_DYLIB tells the bundler to ship our pinned libSDL2 (winebus dlopens it by leaf name from
 # DYLD_FALLBACK_LIBRARY_PATH=<wine>/lib/silo-bundled).
-SILO_SDL_DYLIB="$SDL_PREFIX/lib/libSDL2-2.0.0.dylib" "$ROOT/Scripts/bundle-wine-dylibs.sh" "$WORK/install"
+ONECLICK_SDL_DYLIB="$SDL_PREFIX/lib/libSDL2-2.0.0.dylib" "$ROOT/Scripts/bundle-wine-dylibs.sh" "$WORK/install"
 
 echo "==> Package"
 mkdir -p "$ROOT/dist"

@@ -1,4 +1,4 @@
-// Renders the Silo app icon to a 1024×1024 PNG using CoreGraphics (no external deps).
+// Renders the OneClick app icon to a 1024×1024 PNG using CoreGraphics (no external deps).
 // Usage: swift Scripts/make-icon.swift <output.png>
 import AppKit
 import CoreGraphics

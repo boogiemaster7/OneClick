@@ -3,11 +3,11 @@
 #
 # Pure GitHub-native adoption stats: NO client-side ping, NO external service, NO
 # per-machine tracking. GitHub already tallies a download_count on every release
-# asset; every Silo.zip download (manual install or self-update) increments it, so
+# asset; every OneClick.zip download (manual install or self-update) increments it, so
 # those counters ARE the install + update numbers — this script just sums them into
 # a small JSON the landing page renders. (Download count != unique machines.)
 #
-# Silo publishes MULTIPLE release streams: the app (tags like v0.2.1, asset Silo.zip)
+# OneClick publishes MULTIPLE release streams: the app (tags like v0.2.1, asset OneClick.zip)
 # AND component builds (dxmt-*/wine-* tags, .tar.xz assets). We count ONLY releases
 # that carry an app asset (.zip/.dmg) so the component releases can't pollute the
 # total or get picked as "latest". .sha256 sidecars end in .sha256, so they're
@@ -25,7 +25,7 @@ cd "$(dirname "$0")/.."
 repo="${GITHUB_REPOSITORY:-}"
 if [ -z "$repo" ]; then
   set -a; . ./versions.env; set +a
-  repo="$SILO_GITHUB_REPO"
+  repo="$ONECLICK_GITHUB_REPO"
 fi
 
 out="docs/stats.json"

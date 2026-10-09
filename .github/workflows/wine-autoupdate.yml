@@ -1,7 +1,7 @@
 name: Wine auto-update (watch CrossOver)
 
-# Keeps Silo's Wine current with CrossOver automatically: weekly, detect the latest CrossOver release,
-# and if we haven't built it yet, build + publish a wine-cx-<version> release. See WINE-BUILD.md.
+# Keeps OneClick's Wine current with CrossOver automatically: weekly, detect the latest CrossOver release,
+# and if we haven't built it yet, build + publish a wine-cx-<version> release. See docs/WINE-BUILD.md.
 #
 # Why the Homebrew cask (not a GitHub repo) is the version pointer:
 #   - CodeWeavers has NO public GitHub repo for CrossOver source (CodeWeavers/wine is 404). The
@@ -73,7 +73,7 @@ jobs:
       wine_release_tag: wine-cx-${{ needs.detect.outputs.version }}
 
   # Keep DXVK's tag paired with wine too. DXVK itself is wine-INDEPENDENT (native dlls, no ABI link), but
-  # Silo matches a dxvk-<ver>-cx<wine> release to the installed wine, so without this the tag drifts and
+  # OneClick matches a dxvk-<ver>-cx<wine> release to the installed wine, so without this the tag drifts and
   # `matchedDXVKRelease` silently falls back to "newest dxvk-*". Same idempotency as dxmt above.
   dxvk:
     needs: [detect, build]

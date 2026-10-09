@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Build 3Shain's DXMT from source LOCALLY against Silo's CrossOver Wine, then upload it as a GitHub
+# Build 3Shain's DXMT from source LOCALLY against OneClick's CrossOver Wine, then upload it as a GitHub
 # Release asset. (Same recipe as .github/workflows/build-dxmt.yml — use whichever is easier.)
 #
-# DXMT is Silo's OLDER-GAMES backend: a Metal implementation of Direct3D 10/11 (the GPTK fallback for
+# DXMT is OneClick's OLDER-GAMES backend: a Metal implementation of Direct3D 10/11 (the GPTK fallback for
 # titles D3DMetal can't run, e.g. Overcooked 2). We pin the EXACT version CrossOver 26 bundles
 # (DXMT_VERSION in versions.env) and build it against the CrossOver Wine from Scripts/build-wine.sh —
 # the DXMT↔Wine pairing CrossOver itself ships. We build from DXMT's upstream (3Shain/dxmt) because that
@@ -11,14 +11,14 @@
 #
 # Output: dist/dxmt.tar.xz holding {x86_64-windows, i386-windows, x86_64-unix} — DXMT's D3D10/11 for BOTH
 # 64-bit and 32-bit games (32-bit-only titles like Overcooked 2 need the i386 tree; wine auto-selects per
-# game by PE machine type). In Silo → Settings → DXMT → Import, point at the extracted x86_64-windows folder
+# game by PE machine type). In OneClick → Settings → DXMT → Import, point at the extracted x86_64-windows folder
 # (winemetal.so rides in the x86_64-unix sibling, and overlayDXMT picks up the i386-windows sibling too).
 # Do NOT commit the tarball — attach it to a Release.
 #
 # PREREQUISITES (more than the Wine build needs):
-#   1. A Silo CrossOver Wine INSTALL to build against. Run Scripts/build-wine.sh first (this script then
+#   1. A OneClick CrossOver Wine INSTALL to build against. Run Scripts/build-wine.sh first (this script then
 #      finds .wine-build/install automatically), or pass --wine <dir>. DXMT's winemetal.so links Wine's
-#      winemac.so APIs; Silo's Wine is built -fvisibility=default, which is exactly what DXMT requires.
+#      winemac.so APIs; OneClick's Wine is built -fvisibility=default, which is exactly what DXMT requires.
 #   2. FULL Xcode with the Metal toolchain (`xcrun -sdk macosx metal`). Command Line Tools alone is NOT
 #      enough — the build compiles .metal shaders. Install Xcode, then
 #      `sudo xcode-select -s /Applications/Xcode.app`.
@@ -109,7 +109,7 @@ echo "==> Configure + build (x86_64, release) against the Wine install — compi
 # is load-bearing — llvm-mingw AND llvm@15 each ship a bare `clang` on PATH that would otherwise shadow the
 # Apple clang; those can't link macOS binaries (you get `ld: library 'System' not found`). Overrides DXMT's
 # build-osx.txt (which uses a bare `clang`).
-cat > silo-osx.txt <<'EOF'
+cat > oneclick-osx.txt <<'EOF'
 [binaries]
 c = ['/usr/bin/clang', '-arch', 'x86_64']
 cpp = ['/usr/bin/clang++', '-arch', 'x86_64']
@@ -120,7 +120,7 @@ export PATH="$PATH:$SRC/toolchains/$MINGW_DIR/bin:$LLVM15/bin"
 rm -rf build build32 install
 
 # -Dwine_builtin_dll=true: install d3d10core/d3d11/dxgi AND winemetal all into <arch>-windows as BUILTIN
-# (v0.72 defaults false, which drops the d3d dlls in system32 as native). Silo overlays them into the
+# (v0.72 defaults false, which drops the d3d dlls in system32 as native). OneClick overlays them into the
 # runtime's lib/wine as builtin (GraphicsLinker.overlayDXMT) + forces `…=b`, so this is the layout it needs.
 #
 # Build BOTH ABIs into the SAME install prefix: win64 → install/x86_64-windows (+ x86_64-unix/winemetal.so),
@@ -130,7 +130,7 @@ rm -rf build build32 install
 # both PE ABIs (new-WoW64), so the i386 PE winemetal.dll thunks into the same x86_64-unix/winemetal.so.
 build_abi() {  # $1 = meson cross-file, $2 = build dir
   $ARCH meson setup \
-    --cross-file "$1" --native-file silo-osx.txt \
+    --cross-file "$1" --native-file oneclick-osx.txt \
     -Dnative_llvm_path="$LLVM15" \
     -Dwine_install_path="$WINE_INSTALL" \
     -Dwine_builtin_dll=true \
@@ -141,7 +141,7 @@ build_abi() {  # $1 = meson cross-file, $2 = build dir
 build_abi build-win64.txt build      # → install/x86_64-windows + install/x86_64-unix
 build_abi build-win32.txt build32    # → install/i386-windows (shares the x86_64-unix winemetal.so)
 
-echo "==> Verify the artifacts Silo overlays (GraphicsLinker.overlayDXMT)"
+echo "==> Verify the artifacts OneClick overlays (GraphicsLinker.overlayDXMT)"
 # wine_builtin_dll=true → all dlls in <arch>-windows (builtin) + winemetal.so in the x86_64-unix sibling.
 UNIXDIR="install/x86_64-unix"
 missing=""
@@ -161,13 +161,13 @@ echo "==> Package"
 mkdir -p "$ROOT/dist"
 # Ship x86_64-windows + i386-windows + x86_64-unix as siblings (overlayDXMT reads winemetal.so from the
 # x86_64-unix sibling of the imported x86_64-windows folder, and overlays the i386-windows sibling too when
-# present); drop build-time import libs (*.a) — Silo overlays .dll/.so. i386-unix is included only if the
+# present); drop build-time import libs (*.a) — OneClick overlays .dll/.so. i386-unix is included only if the
 # build produced one (new-WoW64 shares x86_64-unix, so normally there is none).
 I386_UNIX=""; [ -d install/i386-unix ] && I386_UNIX="i386-unix"
 ( cd install && tar -cJf "$ROOT/dist/dxmt.tar.xz" --exclude='*.a' x86_64-windows i386-windows x86_64-unix $I386_UNIX )
 ( cd "$ROOT/dist" && shasum -a 256 dxmt.tar.xz > dxmt.tar.xz.sha256 )
 echo "Built: $ROOT/dist/dxmt.tar.xz (+ .sha256)"
-echo "Import in Silo (Settings → DXMT → Import…): <extracted>/x86_64-windows"
+echo "Import in OneClick (Settings → DXMT → Import…): <extracted>/x86_64-windows"
 echo
 echo "Publish BOTH as Release assets (NOT committed to git):"
 echo "  gh release create $TAG \"$ROOT/dist/dxmt.tar.xz\" \"$ROOT/dist/dxmt.tar.xz.sha256\" -t \"$TAG\" -n \"DXMT $VER (built against CrossOver Wine $CROSSOVER_VERSION)\""

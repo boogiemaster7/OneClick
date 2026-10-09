@@ -1,3 +1,0 @@
-User-agent: *
-Allow: /
-Sitemap: https://mikaelhug.github.io/Silo/sitemap.xml

@@ -3,4 +3,4 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ./Scripts/build-app.sh
-open dist/Silo.app
+open dist/OneClick.app

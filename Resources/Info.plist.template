@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.mikael.silo</string>
+    <string>com.oneclick.app</string>
     <key>CFBundleName</key>
-    <string>Silo</string>
+    <string>OneClick</string>
     <key>CFBundleDisplayName</key>
-    <string>Silo</string>
+    <string>OneClick</string>
     <key>CFBundleExecutable</key>
-    <string>Silo</string>
+    <string>OneClick</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIconName</key>
@@ -26,17 +26,17 @@
     <string>15.0</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.utilities</string>
-    <!-- Custom URL scheme for Desktop game shortcuts: a shortcut .app opens silo://play/steam/<appID>
-         or silo://play/manual/<uuid>, which activates (or launches) Silo and plays the game. Parsed by
-         SiloDeepLink; handled in SiloApp.onOpenURL. -->
+    <!-- Custom URL scheme for Desktop game shortcuts: a shortcut .app opens oneclick://play/steam/<appID>
+         or oneclick://play/manual/<uuid>, which activates (or launches) OneClick and plays the game. Parsed by
+         OneClickDeepLink; handled in OneClickApp.onOpenURL. -->
     <key>CFBundleURLTypes</key>
     <array>
         <dict>
             <key>CFBundleURLName</key>
-            <string>com.mikael.silo.deeplink</string>
+            <string>com.oneclick.deeplink</string>
             <key>CFBundleURLSchemes</key>
             <array>
-                <string>silo</string>
+                <string>oneclick</string>
             </array>
         </dict>
     </array>
@@ -44,7 +44,7 @@
     <true/>
     <key>NSAppTransportSecurity</key>
     <dict>
-        <!-- Default-deny cleartext: all Silo network I/O (GitHub API, release/runtime/Steam-installer
+        <!-- Default-deny cleartext: all OneClick network I/O (GitHub API, release/runtime/Steam-installer
              downloads) is https, so the app can't be tricked into an http downgrade. -->
         <key>NSAllowsArbitraryLoads</key>
         <false/>

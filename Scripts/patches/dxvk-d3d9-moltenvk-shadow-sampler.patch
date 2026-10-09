@@ -10,7 +10,7 @@ index b68608a0..1d5d36f4 100644
 -        // We could also be depth compared!
 -        DclSampler(idx, binding, samplerType, true, implicit);
 -      }
-+      // SILO PATCH: do NOT declare the depth-compare twin. DXVK puts both variants on the SAME
++      // ONECLICK PATCH: do NOT declare the depth-compare twin. DXVK puts both variants on the SAME
 +      // descriptor binding, and MoltenVK cannot map two resources onto one Metal slot — SPIRV-Cross
 +      // either omits the declaration ("use of undeclared identifier s0_2d_shadowSmplr") or collides
 +      // ("cannot reserve 'buffer' resource location at index 0"). Costs hardware shadow compare.
@@ -23,7 +23,7 @@ index b68608a0..1d5d36f4 100644
  
 -        if (samplerType != SamplerTypeTexture3D)
 -          DclSampler(idx, binding, samplerType, true, implicit);
-+        // SILO PATCH: see above — no depth-compare twin on the same binding.
++        // ONECLICK PATCH: see above — no depth-compare twin on the same binding.
        }
      }
  
@@ -58,7 +58,7 @@ index b68608a0..1d5d36f4 100644
 -      }
 -      else
 -        SampleImage(texcoordVar, sampler.color[samplerType], false, samplerType, sampler.boundConst);
-+      // SILO PATCH: always take the COLOR path. The depth branch samples a depth-compare twin declared on
++      // ONECLICK PATCH: always take the COLOR path. The depth branch samples a depth-compare twin declared on
 +      // the SAME descriptor binding as the color sampler, which MoltenVK cannot map to Metal (two resources,
 +      // one slot) — SPIRV-Cross then omits the declaration and the Metal compile fails, so nothing renders.
 +      // Costs hardware shadow compare, not the rest of the frame.

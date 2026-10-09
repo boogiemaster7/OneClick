@@ -9,7 +9,7 @@
 // service separate (and working). These flags pair with `STEAM_CEF_COMMAND_LINE=…--use-gl=swiftshader…` set
 // at launch (see SteamBottle.steamEnvironment); this wrapper is the reliable belt-and-suspenders injector.
 //
-// Silo renames the real `steamwebhelper.exe` → `steamwebhelper_orig.exe` and drops this wrapper in its place.
+// OneClick renames the real `steamwebhelper.exe` → `steamwebhelper_orig.exe` and drops this wrapper in its place.
 // Steam launches the wrapper with its usual arguments; the wrapper re-launches the real binary with the same
 // arguments PLUS the CEF flags, forwarding inherited handles/exit code transparently.
 //

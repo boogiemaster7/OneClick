@@ -2,23 +2,23 @@
 import PackageDescription
 
 let package = Package(
-    name: "Silo",
+    name: "OneClick",
     platforms: [.macOS(.v15)],
     targets: [
-        // Thin executable: defers entirely to SiloKit (so all logic stays testable).
+        // Thin executable: defers entirely to OneClickKit (so all logic stays testable).
         .executableTarget(
-            name: "silo",
-            dependencies: ["SiloKit"],
+            name: "oneclick",
+            dependencies: ["OneClickKit"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         // All app logic + views live here so the test target can import them.
         .target(
-            name: "SiloKit",
+            name: "OneClickKit",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
-            name: "SiloKitTests",
-            dependencies: ["SiloKit"],
+            name: "OneClickKitTests",
+            dependencies: ["OneClickKit"],
             resources: [.copy("Fixtures")],   // sample .acf/.vdf + fake prefix trees
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),

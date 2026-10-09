@@ -2,7 +2,7 @@ name: Build Wine (CrossOver source)
 
 # Self-reliant Wine pipeline: build CrossOver's Wine from CrossOver's own FOSS source (LGPL, the same
 # base Apple's GPTK is built from) and publish it to this repo's Releases, so the app never depends on
-# a third-party prebuilt that may go stale. See WINE-BUILD.md.
+# a third-party prebuilt that may go stale. See docs/WINE-BUILD.md.
 #
 # We do NOT bundle GPTK / D3DMetal — that is Apple-licensed and the user imports it from their own
 # GPTK .dmg in the app. This workflow produces Wine only.
@@ -177,8 +177,8 @@ jobs:
           python3 "$GITHUB_WORKSPACE/Scripts/check-webhelper-wrapper.py" "$WRAPPER"
 
       - name: Bundle dependency dylibs (self-contained runtime)
-        # SILO_SDL_DYLIB ships our pinned libSDL2 (winebus dlopens it by leaf name from silo-bundled).
-        run: SILO_SDL_DYLIB="$SDL_PREFIX/lib/libSDL2-2.0.0.dylib" ./Scripts/bundle-wine-dylibs.sh "$GITHUB_WORKSPACE/wine-install"
+        # ONECLICK_SDL_DYLIB ships our pinned libSDL2 (winebus dlopens it by leaf name from silo-bundled).
+        run: ONECLICK_SDL_DYLIB="$SDL_PREFIX/lib/libSDL2-2.0.0.dylib" ./Scripts/bundle-wine-dylibs.sh "$GITHUB_WORKSPACE/wine-install"
 
       - name: Package wine.tar.xz
         run: |
@@ -199,4 +199,4 @@ jobs:
           files: |
             wine.tar.xz
             wine.tar.xz.sha256
-          body: "CrossOver Wine ${{ inputs.crossover_version }} built from CrossOver FOSS source (LGPL). Pair with Apple GPTK/D3DMetal imported from the .dmg in-app. See WINE-BUILD.md."
+          body: "CrossOver Wine ${{ inputs.crossover_version }} built from CrossOver FOSS source (LGPL). Pair with Apple GPTK/D3DMetal imported from the .dmg in-app. See docs/WINE-BUILD.md."

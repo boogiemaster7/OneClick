@@ -1,0 +1,45 @@
+import Foundation
+import OneClickKit
+
+setbuf(stdout, nil)   // unbuffered so progress shows immediately under non-TTY
+
+// Headless smoke mode for CI / sandboxes that can't open a window.
+if CommandLine.arguments.contains("--smoke")
+    || ProcessInfo.processInfo.environment["ONECLICK_SMOKE"] == "1" {
+    print("\(OneClick.appName) \(OneClick.version) — smoke ok")
+} else if CommandLine.arguments.contains("--setup-steam") {
+    // CLI harness (dev/on-device validation): run the whole guided setup — Wine + DXMT download, then the
+    // bottle's ordered component installs + first-run warm-up — against the real bottle, streaming progress.
+    print("Running OneClick setup (Wine → DXMT → Steam bottle)…")
+    let env = AppEnvironment()
+    await env.bootstrap()
+    let run = Task { @MainActor in await env.runFullSetup() }
+    try? await Task.sleep(for: .milliseconds(150))   // let it flip setupBusy=true
+    var last = ""
+    while env.setupBusy {
+        let line = env.steamBottleVM.status
+        if line != last, !line.isEmpty { print("• \(line)"); last = line }
+        try? await Task.sleep(for: .milliseconds(500))
+    }
+    await run.value
+    print("Final: \(env.steamBottleVM.status)")
+} else if let idx = CommandLine.arguments.firstIndex(of: "--import-gptk"),
+          idx + 1 < CommandLine.arguments.count {
+    // CLI: import GPTK from an Apple .dmg (same code path the GUI uses). Top-level await — no
+    // Task+semaphore (that pattern deadlocks the main thread in a CLI).
+    let dmg = URL(fileURLWithPath: CommandLine.arguments[idx + 1])
+    print("Importing GPTK from \(dmg.path)")
+    do {
+        let result = try await GPTKImporter(runner: SystemProcessRunner(), paths: .standard())
+            .importGPTK(fromDMG: dmg) { stage in print("• \(stage)") }
+        print("Imported GPTK:")
+        print("  install dir:  \(result.installDir.path)")
+        print("  gptk lib dir: \(result.gptkLibDir.path)")
+        print("  D3DMetal:     \(result.d3dMetalFramework.path)")
+    } catch {
+        print("GPTK import failed: \(error)")
+        exit(1)
+    }
+} else {
+    OneClickApp.main()
+}

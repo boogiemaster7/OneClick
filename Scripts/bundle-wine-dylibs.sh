@@ -72,13 +72,13 @@ done
 # Bundle the pinned SDL (built from source by build-wine.sh / build-wine.yml, not Homebrew). winebus's
 # controller backend dlopens "libSDL2-2.0.0.dylib" by leaf name → dyld resolves it here via
 # DYLD_FALLBACK_LIBRARY_PATH. SDL on macOS links only system frameworks, so no transitive closure to add.
-if [ -n "${SILO_SDL_DYLIB:-}" ]; then
-  if [ -f "$SILO_SDL_DYLIB" ] && has_arch "$SILO_SDL_DYLIB"; then
-    cp -f "$SILO_SDL_DYLIB" "$BUNDLED/libSDL2-2.0.0.dylib"
+if [ -n "${ONECLICK_SDL_DYLIB:-}" ]; then
+  if [ -f "$ONECLICK_SDL_DYLIB" ] && has_arch "$ONECLICK_SDL_DYLIB"; then
+    cp -f "$ONECLICK_SDL_DYLIB" "$BUNDLED/libSDL2-2.0.0.dylib"
     chmod u+w "$BUNDLED/libSDL2-2.0.0.dylib"
-    echo "Bundled pinned SDL: $SILO_SDL_DYLIB"
+    echo "Bundled pinned SDL: $ONECLICK_SDL_DYLIB"
   else
-    echo "ERROR: SILO_SDL_DYLIB=$SILO_SDL_DYLIB missing or wrong arch ($ARCH)"; exit 1
+    echo "ERROR: ONECLICK_SDL_DYLIB=$ONECLICK_SDL_DYLIB missing or wrong arch ($ARCH)"; exit 1
   fi
 fi
 

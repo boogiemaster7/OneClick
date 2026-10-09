@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Run the Silo test suite.
+# Run the OneClick test suite.
 #
-# Silo uses Swift Testing (`import Testing`). With *Command Line Tools only* (no Xcode), the
+# OneClick uses Swift Testing (`import Testing`). With *Command Line Tools only* (no Xcode), the
 # Testing framework and its interop dylib ship with the toolchain but are NOT on SwiftPM's default
 # search paths, so we add them. With full Xcode (e.g. GitHub CI runners) Swift Testing resolves
 # natively and these dirs simply don't exist, so we add the flags only when present.

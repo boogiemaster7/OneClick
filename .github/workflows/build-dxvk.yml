@@ -1,10 +1,10 @@
 name: Build DXVK (DirectX 9 + broad-compat backend)
 
-# Self-reliant DXVK pipeline: build doitsujin/dxvk (Silo's DirectX 9 translator + the Vulkan compatibility
+# Self-reliant DXVK pipeline: build doitsujin/dxvk (OneClick's DirectX 9 translator + the Vulkan compatibility
 # fallback below GPTK/DXMT) STOCK from upstream and publish it to this repo's Releases — so the app never
 # depends on a third-party prebuilt (e.g. the stale Gcenx fork) that may go stale.
 #
-# DXVK is shipped NATIVE (no CrossOver builtin patches): Silo seeds its d3d9/d3d10core/d3d11 + dxgi dlls into
+# DXVK is shipped NATIVE (no CrossOver builtin patches): OneClick seeds its d3d9/d3d10core/d3d11 + dxgi dlls into
 # the game prefix and overrides them `=n`, running on the base wine runtime whose bundled MoltenVK is DXVK's
 # Vulkan driver (D3D → Vulkan → MoltenVK → Metal). DXVK is NOT Wine, so constraint #8 is unaffected. The
 # dlls are a pure Windows-PE cross-compile (meson + llvm-mingw + glslang) needing no Rosetta, x86_64 Homebrew
@@ -37,7 +37,7 @@ on:
         default: ""
   workflow_call:
     # Chained from wine-autoupdate.yml after a new wine-cx-* is published, so the DXVK↔Wine validation tag
-    # stays paired with the current runtime (DXVK itself is wine-independent, but Silo matches by tag).
+    # stays paired with the current runtime (DXVK itself is wine-independent, but OneClick matches by tag).
     inputs:
       dxvk_version:
         required: false
@@ -199,7 +199,7 @@ jobs:
           cp "$dylib" "$DXVK_SRC/out/lib/libMoltenVK.dylib"
           file "$DXVK_SRC/out/lib/libMoltenVK.dylib"
 
-      - name: Assemble the Silo layout + verify
+      - name: Assemble the OneClick layout + verify
         run: |
           set -eo pipefail
           cd "$DXVK_SRC"
@@ -235,4 +235,4 @@ jobs:
           files: |
             dxvk.tar.xz
             dxvk.tar.xz.sha256
-          body: "DXVK ${{ env.DXVK_VER }} (${{ env.DXVK_REPO }}) — Silo's DirectX 9 + broad-compat Vulkan backend (native, D3D → Vulkan → the runtime's bundled MoltenVK → Metal). Validated with this repo's CrossOver Wine (${{ env.WINE_TAG }}). In Silo: Settings → DXVK → Download Latest (or import the extracted x86_64-windows folder)."
+          body: "DXVK ${{ env.DXVK_VER }} (${{ env.DXVK_REPO }}) — OneClick's DirectX 9 + broad-compat Vulkan backend (native, D3D → Vulkan → the runtime's bundled MoltenVK → Metal). Validated with this repo's CrossOver Wine (${{ env.WINE_TAG }}). In OneClick: Settings → DXVK → Download Latest (or import the extracted x86_64-windows folder)."

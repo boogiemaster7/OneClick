@@ -1,0 +1,120 @@
+import Foundation
+import Testing
+@testable import OneClickKit
+
+@Suite("RuntimeVariants")
+struct RuntimeVariantsTests {
+
+    /// Minimal base wine runtime tree + a marker file so a clone (or its absence) is detectable.
+    private func makeWine(_ tmp: TempDir) throws -> URL {
+        try tmp.makeDir("wine/lib/wine/x86_64-windows")
+        try tmp.makeDir("wine/lib/wine/x86_64-unix")
+        try tmp.write("wine/share/marker.txt", "BASE")
+        return try tmp.write("wine/bin/wine64", "#!/bin/sh")
+    }
+
+    /// A DXMT module dir (the `x86_64-windows` folder `BackendConfig.dxmtLibDirPath` points at).
+    private func makeDXMT(_ tmp: TempDir) throws -> URL {
+        let lib = try tmp.makeDir("dxmt/lib/wine/x86_64-windows")
+        for module in ["d3d11.dll", "d3d10core.dll", "dxgi.dll", "winemetal.dll"] {
+            try tmp.write("dxmt/lib/wine/x86_64-windows/\(module)", "DXMT")
+        }
+        try tmp.makeDir("dxmt/lib/wine/x86_64-unix")
+        try tmp.write("dxmt/lib/wine/x86_64-unix/winemetal.so", "WM")
+        return lib
+    }
+
+    /// A GPTK module dir (PE dlls + relative-symlink `.so`s + lib/external), as `overlayGPTK` expects.
+    private func makeGPTK(_ tmp: TempDir) throws -> URL {
+        let win = try tmp.makeDir("gptk/lib/wine/x86_64-windows")
+        let unix = try tmp.makeDir("gptk/lib/wine/x86_64-unix")
+        try tmp.makeDir("gptk/lib/external/D3DMetal.framework")
+        for module in ["d3d11.dll", "dxgi.dll"] {
+            try tmp.write("gptk/lib/wine/x86_64-windows/\(module)", "GPTK:\(module)")
+            let so = unix.appendingPathComponent((module as NSString).deletingPathExtension + ".so")
+            try FileManager.default.createSymbolicLink(
+                atPath: so.path, withDestinationPath: "../../external/libd3dshared.dylib")
+        }
+        try tmp.write("gptk/lib/external/libd3dshared.dylib", "DYLIB")
+        try tmp.write("gptk/lib/external/D3DMetal.framework/D3DMetal", "FRAMEWORK")
+        return win
+    }
+
+    @Test("prepare(.gptk) overlays the BASE runtime in place and returns the base wine (no clone)")
+    func prepareGPTK() throws {
+        let tmp = try TempDir(); defer { tmp.cleanup() }
+        let wine = try makeWine(tmp)
+        let gptkLib = try makeGPTK(tmp)
+        let out = try RuntimeVariants().prepare(backend: .gptk, baseWine: wine, libDir: gptkLib)
+        #expect(out == wine)                                     // the proven in-place path
+        #expect(FileManager.default.fileExists(
+            atPath: tmp.url.appendingPathComponent("wine/lib/wine/x86_64-windows/d3d11.dll").path))
+        #expect(!FileManager.default.fileExists(
+            atPath: tmp.url.appendingPathComponent("wine-dxmt").path))   // nothing cloned
+    }
+
+    @Test("prepare(.dxmt) clones the base to <root>-dxmt and overlays DXMT into the CLONE only")
+    func prepareDXMT() throws {
+        let tmp = try TempDir(); defer { tmp.cleanup() }
+        let wine = try makeWine(tmp)
+        let dxmtLib = try makeDXMT(tmp)
+        let out = try RuntimeVariants().prepare(backend: .dxmt, baseWine: wine, libDir: dxmtLib)
+        #expect(out.path.hasSuffix("wine-dxmt/bin/wine64"))
+        // A full clone (the marker rode along); the overlay landed in the clone, never the base.
+        #expect(FileManager.default.fileExists(
+            atPath: tmp.url.appendingPathComponent("wine-dxmt/share/marker.txt").path))
+        #expect(FileManager.default.fileExists(
+            atPath: tmp.url.appendingPathComponent("wine-dxmt/lib/wine/x86_64-windows/winemetal.dll").path))
+        #expect(!FileManager.default.fileExists(
+            atPath: tmp.url.appendingPathComponent("wine/lib/wine/x86_64-windows/winemetal.dll").path))
+    }
+
+    @Test("prepare(.dxmt) keeps an EXISTING clone (idempotent — no wipe on every launch)")
+    func prepareDXMTIdempotent() throws {
+        let tmp = try TempDir(); defer { tmp.cleanup() }
+        let wine = try makeWine(tmp)
+        let dxmtLib = try makeDXMT(tmp)
+        let variants = RuntimeVariants()
+        _ = try variants.prepare(backend: .dxmt, baseWine: wine, libDir: dxmtLib)
+        // Mutate a file INSIDE the clone — a re-clone would wipe this.
+        let marker = tmp.url.appendingPathComponent("wine-dxmt/share/marker.txt")
+        try Data("MUTATED".utf8).write(to: marker)
+        _ = try variants.prepare(backend: .dxmt, baseWine: wine, libDir: dxmtLib)
+        #expect(try String(contentsOf: marker, encoding: .utf8) == "MUTATED")   // clone NOT re-created
+    }
+
+    /// A DXVK module dir (the `x86_64-windows` folder `BackendConfig.dxvkLibDirPath` points at): PE-only,
+    /// no `dxgi`, no `.so`.
+    private func makeDXVK(_ tmp: TempDir) throws -> URL {
+        let lib = try tmp.makeDir("dxvk/lib/wine/x86_64-windows")
+        for module in ["d3d9.dll", "d3d10core.dll", "d3d11.dll"] {
+            try tmp.write("dxvk/lib/wine/x86_64-windows/\(module)", "DXVK")
+        }
+        return lib
+    }
+
+    @Test("prepare(.dxvk) runs on the BASE runtime — no clone, nothing overlaid into lib/wine (native model)")
+    func prepareDXVK() throws {
+        let tmp = try TempDir(); defer { tmp.cleanup() }
+        let wine = try makeWine(tmp)
+        let dxvkLib = try makeDXVK(tmp)
+        let out = try RuntimeVariants().prepare(backend: .dxvk, baseWine: wine, libDir: dxvkLib)
+        #expect(out == wine)   // native DXVK runs on the base wine — its dlls are seeded into the PREFIX, not here
+        // No `<root>-dxvk` clone, and the base runtime's lib/wine is untouched (DXVK is `=n` from the prefix).
+        #expect(!FileManager.default.fileExists(atPath: tmp.url.appendingPathComponent("wine-dxvk").path))
+        #expect(!FileManager.default.fileExists(
+            atPath: tmp.url.appendingPathComponent("wine/lib/wine/x86_64-windows/d3d9.dll").path))
+    }
+
+    @Test("cloneName + isVariantClone are the ONE naming source — and never flag a real DXMT release tag")
+    func cloneNaming() {
+        #expect(RuntimeVariants.cloneName(ofBase: "wine-cx-26.2.0", backend: .dxmt) == "wine-cx-26.2.0-dxmt")
+        // A clone name round-trips as a clone…
+        #expect(RuntimeVariants.isVariantClone(RuntimeVariants.cloneName(ofBase: "wine-cx-26.2.0", backend: .dxmt)))
+        // …a base wine build and a REAL DXMT/DXVK release tag do not (they must stay listable in their panes;
+        // DXVK never clones, so no `-dxvk` dir is ever created either).
+        #expect(!RuntimeVariants.isVariantClone("wine-cx-26.2.0"))
+        #expect(!RuntimeVariants.isVariantClone("dxmt-v0.72-cx26.2.0"))
+        #expect(!RuntimeVariants.isVariantClone("dxvk-v2.4-cx26.2.0"))
+    }
+}

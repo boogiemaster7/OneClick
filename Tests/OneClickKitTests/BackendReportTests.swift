@@ -1,0 +1,223 @@
+import Foundation
+import Testing
+@testable import OneClickKit
+
+/// An OPT-IN diagnostic, not a unit test: it inspects the real Steam bottle on this machine and reports what
+/// Automatic decides for each installed game (using the SAME `D3DProfile`/`BackendChooser` the launch path
+/// uses, so it can't drift from production), plus what each backend ACTUALLY did according to the per-game
+/// launch logs OneClick already writes.
+///
+/// Skipped unless `ONECLICK_BOTTLE_REPORT=1`, so hermetic runs and CI are unaffected:
+///     ONECLICK_BOTTLE_REPORT=1 Scripts/test.sh --filter BackendReport
+@Suite("Backend report (on-device)", .serialized)
+struct BackendReportTests {
+
+    /// A trait, not an assertion — an opt-in diagnostic must be SKIPPED on a machine without a bottle,
+    /// never counted as a failure (constraint #4: the suite is green with zero runtimes installed).
+    static var enabled: Bool { ProcessInfo.processInfo.environment["ONECLICK_BOTTLE_REPORT"] == "1" }
+
+    @Test("report: what Automatic chooses for every installed game, and why", .enabled(if: BackendReportTests.enabled))
+    func automaticChoiceReport() async throws {
+        let paths = AppPaths.standard()
+        let config = await ConfigStore(paths: paths).load()
+        let apps = try await DiscoveryEngine().discoverGames(steamRoot: paths.steamBottleClientDir)
+
+        print("\n=== Automatic backend decisions (real library) ===")
+        for app in apps.sorted(by: { $0.name < $1.name }) {
+            let gameConfig = config.config(for: app.appID)
+            guard let exe = LaunchOrchestrator(runner: SystemProcessRunner(), linker: GraphicsLinker())
+                .resolvedExecutable(app: app, config: gameConfig) else {
+                print("  \(app.name): no executable resolved"); continue
+            }
+            let is32 = WindowsExecutable.is32Bit(exe)
+            let profile = D3DProfile.scan(executable: exe)
+            let learned = gameConfig.learnedUnderRuntime == config.backend.gptkRuntimeName
+                ? gameConfig.learnedBackend : nil
+            let chosen = BackendChooser.choose(
+                gameConfig.graphics, is32Bit: is32, profile: profile, learned: learned)
+
+            var apis: [String] = []
+            if profile.usesD3D8 { apis.append("d3d8") }
+            if profile.usesD3D9 { apis.append("d3d9") }
+            if profile.usesD3D1x { apis.append("d3d10/11") }
+            if profile.usesD3D12 { apis.append("d3d12") }
+            if profile.usesVulkan { apis.append("vulkan") }
+            if profile.usesOpenGL { apis.append("opengl") }
+            let why: String
+            if gameConfig.graphics != .auto { why = "pinned to \(gameConfig.graphics.badge)" }
+            else if profile.isD3D9Only { why = "DirectX 9 only → the sole DX9 translator" }
+            else if profile.isVulkanNative { why = "Vulkan-native → needs the working MoltenVK" }
+            else if is32, profile.usesD3D9 { why = "32-bit + d3d9 → DXMT has no d3d9, DXVK covers both" }
+            else if is32 { why = "32-bit → GPTK is 64-bit-only" }
+            else if learned != nil { why = "learned after a previous failure" }
+            else { why = "default" }
+
+            print("""
+              \(app.name)
+                exe      \(exe.lastPathComponent)  (\(is32 ? "32-bit" : "64-bit"))
+                uses     \(apis.isEmpty ? "unknown (loads D3D dynamically)" : apis.joined(separator: ", "))
+                chooses  \(chosen.badge)  — \(why)
+            """)
+        }
+    }
+
+    @Test("report: what each backend actually did, from the launch logs", .enabled(if: BackendReportTests.enabled))
+    func actualEngagementReport() throws {
+        let paths = AppPaths.standard()
+        let logs = (try? FileManager.default.contentsOfDirectory(
+            at: paths.logsDir, includingPropertiesForKeys: nil)) ?? []
+
+        print("\n=== What actually happened on the last launch of each game ===")
+        for log in logs.sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
+        where log.pathExtension == "log" && !log.lastPathComponent.hasPrefix("steam-bottle") {
+            // A game wrapped in `explorer /desktop=` logs nothing of its own here — the child's output does
+            // not reach OneClick's log (measured: 39 KB of wine output, zero DXVK lines). DXVK still writes its
+            // OWN log beside this one, so fold that in rather than reporting a working game as `unknown`.
+            var text = log.tailString()
+            let sidecars = (try? FileManager.default.contentsOfDirectory(atPath: paths.logsDir.path)) ?? []
+            if text.contains("/desktop=OneClick") {
+                for name in sidecars where name.hasSuffix("_d3d9.log") || name.hasSuffix("_d3d11.log") {
+                    if let extra = try? String(contentsOf: paths.logsDir.appendingPathComponent(name),
+                                               encoding: .utf8), text.contains(name.components(separatedBy: "_")[0]) {
+                        text += "\n" + extra
+                    }
+                }
+            }
+            guard text.contains("OneClick launch") else { continue }
+            // The backend is recorded in the launch header OneClick writes (its WINEDLLOVERRIDES clause). Match
+            // on each backend's DISTINGUISHING token rather than the whole clause: the exact set changes
+            // between OneClick versions (d3d9 joined GPTK's), and a log written by an older build must still be
+            // readable — that is the whole point of reading history back.
+            let backend: GraphicsBackend? = {
+                guard let line = text.split(separator: "\n").first(where: { $0.contains("WINEDLLOVERRIDES=") })
+                else { return nil }
+                if line.contains("winemetal") { return .dxmt }      // DXMT's Metal bridge, DXMT only
+                if line.hasSuffix("=n") { return .dxvk }            // DXVK is the only NATIVE backend
+                if line.contains("d3d12") { return .gptk }          // only D3DMetal claims d3d12
+                return nil
+            }()
+            let verdict = backend.map { GraphicsFallback.classify(text, backend: $0) }
+            print("  \(log.lastPathComponent)  backend=\(backend?.badge ?? "?")  → \(verdict.map(String.init(describing:)) ?? "n/a")")
+        }
+    }
+
+    /// The third question, and the one a user actually feels: **is the bottle correctly provisioned?**
+    /// Prints each setup component's own `isSatisfied` predicate against the REAL bottle, beside the
+    /// evidence on disk. A component that reports unsatisfied on a working bottle means setup re-runs it
+    /// forever; one that reports satisfied while the artifact is absent means a game fails later for a
+    /// reason OneClick already knew about.
+    @Test("report: is the real bottle correctly provisioned, component by component",
+          .enabled(if: BackendReportTests.enabled))
+    func provisioningReport() throws {
+        let paths = AppPaths.standard()
+        let bottle = SteamBottle(runner: SystemProcessRunner(), paths: paths)
+        let fm = FileManager.default
+        let driveC = paths.steamBottle.appendingPathComponent("drive_c")
+
+        func size(_ rel: String) -> String {
+            let u = driveC.appendingPathComponent(rel)
+            guard let n = try? fm.attributesOfItem(atPath: u.path)[.size] as? Int else { return "absent" }
+            return "\(n) bytes"
+        }
+
+        print("\n=== Bottle provisioning (real bottle) ===")
+        for component in BottleComponent.allCases {
+            print("  \(bottle.isSatisfied(component) ? "✓" : "✗")  \(component.rawValue)")
+        }
+        let fonts = (try? fm.contentsOfDirectory(atPath: driveC.appendingPathComponent("windows/Fonts").path))
+        print("""
+          evidence
+            fonts installed      \(fonts?.count ?? 0)
+            d3dcompiler system32 \(size("windows/system32/d3dcompiler_47.dll"))
+            d3dcompiler syswow64 \(size("windows/syswow64/d3dcompiler_47.dll"))
+            msvcp140  system32   \(size("windows/system32/msvcp140.dll"))
+            vcruntime system32   \(size("windows/system32/vcruntime140.dll"))
+        """)
+        let unsatisfied = bottle.unsatisfiedComponents()
+        print("  OneClick would report unsatisfied: \(unsatisfied.isEmpty ? "none" : unsatisfied.map(\.rawValue).joined(separator: ", "))")
+    }
+
+    /// `WineServerProbe` is what stops OneClick moving or updating a bottle out from under a running wineserver —
+    /// corrupting the prefix. It works by predicting a path (`<tmp>/.wine-<uid>/server-<dev>-<ino>/socket`),
+    /// which is precisely the kind of assumption that has been wrong three times in this codebase. Prints the
+    /// prediction beside the filesystem so a mismatch is visible rather than silently reported as "not live".
+    @Test("report: does the wineserver probe find the real bottle's socket",
+          .enabled(if: BackendReportTests.enabled))
+    func wineServerProbeReport() throws {
+        let paths = AppPaths.standard()
+        let expected = WineServerProbe.serverDirName(for: paths.steamBottle)
+        print("\n=== Wine server probe (real bottle) ===")
+        print("  predicted dir  \(expected ?? "nil")")
+        for root in ["/tmp", ProcessInfo.processInfo.environment["TMPDIR"] ?? ""] where !root.isEmpty {
+            let dir = URL(fileURLWithPath: root).appendingPathComponent(".wine-\(getuid())")
+            let entries = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+            print("  \(dir.path)")
+            for e in entries.prefix(4) {
+                let hasSocket = FileManager.default.fileExists(
+                    atPath: dir.appendingPathComponent(e).appendingPathComponent("socket").path)
+                print("      \(e)\(hasSocket ? "   ← has socket" : "")")
+            }
+        }
+        let live = WineServerProbe.isLive(prefix: paths.steamBottle)
+        print("  isLive(SteamBottle) = \(live)")
+        print("  (true whenever Steam or a game is running; false otherwise — both are valid)")
+    }
+
+    /// Runs the GPTK overlay against the REAL installed GPTK tree, into a throwaway runtime + prefix, and
+    /// prints what landed. The hermetic tests build their own fixture and so can only prove the code does
+    /// what it says — not that Apple's actual artifact has the shape the code assumes. This is the check
+    /// that the module is really named `nvngx-on-metalfx`, that its `.so` really is a symlink, and that the
+    /// alias + prefix seed come out the other side.
+    ///
+    /// Writes only into a temp dir it deletes; the real runtime and bottle are never touched.
+    @Test("report: the nvngx/MetalFX alias against the REAL installed GPTK",
+          .enabled(if: BackendReportTests.enabled))
+    func nvngxAliasAgainstRealGPTK() throws {
+        let paths = AppPaths.standard()
+        let fileManager = FileManager.default
+        print("\n=== GPTK nvngx alias (real artifact) ===")
+        guard let gptk = try? fileManager.contentsOfDirectory(
+                at: paths.runtimesDir, includingPropertiesForKeys: nil)
+                .map({ $0.appendingPathComponent("lib/wine/x86_64-windows") })
+                .first(where: { fileManager.fileExists(
+                    atPath: $0.appendingPathComponent("d3d11.dll").path)
+                    && fileManager.fileExists(atPath: $0.deletingLastPathComponent()
+                        .deletingLastPathComponent().appendingPathComponent("external").path) })
+        else {
+            print("  no GPTK install found under \(paths.runtimesDir.path) — nothing to check")
+            return
+        }
+        print("  source  \(gptk.path)")
+        print("  ships   \(((try? fileManager.contentsOfDirectory(atPath: gptk.path)) ?? []).sorted().joined(separator: " "))")
+
+        let scratch = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("oneclick-nvngx-check-\(getpid())")
+        defer { try? fileManager.removeItem(at: scratch) }
+        for dir in ["wine/lib/wine/x86_64-windows", "wine/lib/wine/x86_64-unix", "wine/bin", "prefix"] {
+            try fileManager.createDirectory(
+                at: scratch.appendingPathComponent(dir), withIntermediateDirectories: true)
+        }
+        let wine = scratch.appendingPathComponent("wine/bin/wine64")
+        try Data("#!/bin/sh\n".utf8).write(to: wine)
+
+        let linker = GraphicsLinker()
+        try linker.overlayGPTK(wineBinary: wine, gptkLibDir: gptk)
+        try linker.installGPTKPrefixLoaders(prefix: scratch.appendingPathComponent("prefix"), gptkLibDir: gptk)
+
+        let win = scratch.appendingPathComponent("wine/lib/wine/x86_64-windows")
+        let unix = scratch.appendingPathComponent("wine/lib/wine/x86_64-unix")
+        let system32 = scratch.appendingPathComponent("prefix/drive_c/windows/system32")
+        let aliased = fileManager.contentsEqual(
+            atPath: win.appendingPathComponent("nvngx.dll").path,
+            andPath: gptk.appendingPathComponent("nvngx-on-metalfx.dll").path)
+        let soTarget = (try? fileManager.destinationOfSymbolicLink(
+            atPath: unix.appendingPathComponent("nvngx.so").path)) ?? "absent / not a symlink"
+        let seeded = ((try? fileManager.contentsOfDirectory(atPath: system32.path)) ?? []).sorted()
+        print("  runtime nvngx.dll aliased from the shim  \(aliased)")
+        print("  runtime nvngx.so →  \(soTarget)")
+        print("  prefix system32     \(seeded.joined(separator: " "))")
+        try linker.overlayGPTK(wineBinary: wine, gptkLibDir: gptk)   // idempotency on the real tree
+        let survived = fileManager.fileExists(atPath: win.appendingPathComponent("nvngx.dll").path)
+        print("  second overlay left nvngx.dll in place   \(survived)")
+    }
+}
