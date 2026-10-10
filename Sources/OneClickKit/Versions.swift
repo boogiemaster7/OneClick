@@ -10,7 +10,7 @@ public enum Versions {
     /// GitHub repo (owner/name) — dxmt-* / dxvk-* graphics runtime builds.
     public static let runtimeRepo = "mikaelhug/Silo"
     /// GitHub repo (owner/name) — wine-cx-* Wine runtime builds.
-    public static let wineRepo = "mikaelhug/Silo"
+    public static let wineRepo = "boogiemaster7/OneClick"
     /// CrossOver FOSS source version the Wine runtime is built from (CI/build input only — the app
     /// downloads the latest published wine-cx-* release at runtime).
     public static let crossoverVersion = "26.3.0"
