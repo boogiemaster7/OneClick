@@ -25,6 +25,7 @@ struct VersionsTests {
         #expect(try envValue("ONECLICK_VERSION") == Versions.oneclick)
         #expect(try envValue("ONECLICK_GITHUB_REPO") == Versions.githubRepo)
         #expect(try envValue("RUNTIME_GITHUB_REPO") == Versions.runtimeRepo)
+        #expect(try envValue("WINE_GITHUB_REPO") == Versions.wineRepo)
         #expect(try envValue("CROSSOVER_VERSION") == Versions.crossoverVersion)
     }
 
@@ -32,6 +33,21 @@ struct VersionsTests {
     func oneClickConstantsSourced() {
         #expect(OneClick.version == Versions.oneclick)
         #expect(OneClick.updateRepo == Versions.githubRepo)
-        #expect(OneClick.wineRepo == Versions.runtimeRepo)
+        #expect(OneClick.wineRepo == Versions.wineRepo)
+        #expect(OneClick.graphicsRuntimeRepo == Versions.runtimeRepo)
+    }
+}
+
+@Suite("Runtime download sources")
+@MainActor
+struct RuntimeSourceWiringTests {
+    @Test("Wine downloads from the Wine repo; DXMT and DXVK from the graphics-runtime repo")
+    func eachRuntimeUsesItsRepo() throws {
+        let tmp = try TempDir(); defer { tmp.cleanup() }
+        let env = AppEnvironment(paths: AppPaths(supportDir: tmp.url.appendingPathComponent("OneClick")),
+                                 runner: FakeProcessRunner())
+        #expect(env.runtime.repo == OneClick.wineRepo)
+        #expect(env.dxmtRuntime.repo == OneClick.graphicsRuntimeRepo)
+        #expect(env.dxvkRuntime.repo == OneClick.graphicsRuntimeRepo)
     }
 }

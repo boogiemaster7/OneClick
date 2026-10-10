@@ -167,6 +167,11 @@ struct RuntimeManagerTests {
         """.utf8))
         // Installed wine 26.2.0 → the DXMT built against it, NOT the newest.
         #expect(RuntimeManager.matchedDXMTRelease(releases, forWine: "wine-cx-26.2.0")?.tagName == "dxmt-v0.72-cx26.2.0")
+        // A patched build (`-oc1` suffix) still pairs with the DXMT built against the same CrossOver source.
+        #expect(RuntimeManager.matchedDXMTRelease(releases, forWine: "wine-cx-26.2.0-oc1")?.tagName == "dxmt-v0.72-cx26.2.0")
+        #expect(RuntimeManager.wineCXVersion("wine-cx-26.3.0-oc1") == "26.3.0")
+        #expect(RuntimeManager.wineCXVersion("wine-cx-26.3.0") == "26.3.0")
+        #expect(RuntimeManager.wineCXVersion("dxmt-v0.72") == nil)
         // No matching cx → newest dxmt-*.
         #expect(RuntimeManager.matchedDXMTRelease(releases, forWine: "wine-cx-99.9.9")?.tagName == "dxmt-v0.72-cx26.3.0")
         // No wine configured → newest dxmt-*.

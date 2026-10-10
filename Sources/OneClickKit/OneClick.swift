@@ -18,7 +18,11 @@ public enum OneClick {
     /// Repo whose releases host OneClick's own Wine builds (the base D3DMetal runs on). Self-reliant by design:
     /// OneClick compiles Wine from published open-source (LGPL) Wine sources in its own CI and hosts the result on
     /// its Releases, so it never depends on a third-party prebuilt that may go stale. See docs/WINE-BUILD.md.
-    public static let wineRepo = Versions.runtimeRepo
+    public static let wineRepo = Versions.wineRepo
+
+    /// Repo whose releases host the DXMT and DXVK graphics runtimes (each tagged with the CrossOver version it
+    /// was built against, so it stays ABI-paired with a Wine built from the same source).
+    public static let graphicsRuntimeRepo = Versions.runtimeRepo
 
     /// Apple's official GPTK page (manual DMG download, requires Apple ID).
     public static let appleGPTKURL = URL(string: "https://developer.apple.com/games/game-porting-toolkit/")!

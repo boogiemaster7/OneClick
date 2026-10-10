@@ -84,11 +84,11 @@ public final class AppEnvironment {
         self.dxmtRuntime = RuntimeViewModel(
             kind: .dxmt(manager: runtimeManager,
                         wineRuntimeName: { backendSettings.config.wineRuntimeName }),
-            manager: runtimeManager, repo: OneClick.wineRepo)
+            manager: runtimeManager, repo: OneClick.graphicsRuntimeRepo)
         self.dxvkRuntime = RuntimeViewModel(
             kind: .dxvk(manager: runtimeManager,
                         wineRuntimeName: { backendSettings.config.wineRuntimeName }),
-            manager: runtimeManager, repo: OneClick.wineRepo)
+            manager: runtimeManager, repo: OneClick.graphicsRuntimeRepo)
         self.gptkManager = GPTKManagerViewModel(importer: GPTKImporter(runner: runner, paths: paths))
 
         // The single Steam bottle + its live client session + settings VM. The client runs on the base wine

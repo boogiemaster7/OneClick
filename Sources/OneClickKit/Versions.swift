@@ -7,9 +7,11 @@ public enum Versions {
     public static let oneclick = "0.1.0"
     /// GitHub repo (owner/name) — app releases (updater).
     public static let githubRepo = "boogiemaster7/OneClick"
-    /// GitHub repo (owner/name) — wine-cx-* / dxmt-* / dxvk-* runtime builds.
+    /// GitHub repo (owner/name) — dxmt-* / dxvk-* graphics runtime builds.
     public static let runtimeRepo = "mikaelhug/Silo"
+    /// GitHub repo (owner/name) — wine-cx-* Wine runtime builds.
+    public static let wineRepo = "mikaelhug/Silo"
     /// CrossOver FOSS source version the Wine runtime is built from (CI/build input only — the app
     /// downloads the latest published wine-cx-* release at runtime).
-    public static let crossoverVersion = "26.2.0"
+    public static let crossoverVersion = "26.3.0"
 }

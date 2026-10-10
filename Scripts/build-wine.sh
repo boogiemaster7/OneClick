@@ -32,6 +32,7 @@ curl -fL "https://media.codeweavers.com/pub/crossover/source/crossover-sources-$
 rm -rf src && mkdir src && tar -xzf sources.tar.gz -C src
 WINE_SRC="$(find src -maxdepth 3 -type d -name wine | head -1)"
 [ -n "$WINE_SRC" ] || { echo "ERROR: wine source dir not found in tarball"; exit 1; }
+"$ROOT/Scripts/apply-wine-patches.sh" "$WORK/$WINE_SRC"
 
 echo "==> Build pinned SDL $SDL_VERSION (x86_64) — winebus's game-controller backend dlopens libSDL2"
 # Build the EXACT SDL CrossOver ships (versions.env) from libsdl-org source, x86_64 to match Wine. This

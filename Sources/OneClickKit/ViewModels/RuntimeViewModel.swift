@@ -89,7 +89,7 @@ public final class RuntimeViewModel {
 
     private let kind: RuntimeKind
     private let manager: RuntimeManager
-    private let repo: String
+    let repo: String
 
     /// Called when the default changes so the backend config can adopt its payload (wine binary / DXMT
     /// lib dir).
@@ -188,7 +188,7 @@ public final class RuntimeViewModel {
             statusMessage = "Downloading \(release.version)… \(kind.downloadHint)"
             // The built-in repo MUST publish a SHA-256 (fail-closed); a user's own override repo may not,
             // so the digest stays best-effort there.
-            let requireDigest = repo == OneClick.wineRepo
+            let requireDigest = repo == OneClick.wineRepo || repo == OneClick.graphicsRuntimeRepo
             _ = try await kind.install(release.tagName, asset.browserDownloadUrl, requireDigest)
             await refresh()
             if defaultName == nil, let new = installed.first(where: { $0.name == release.tagName }) {

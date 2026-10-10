@@ -114,6 +114,9 @@ jobs:
           test -n "$WINE_SRC"
           echo "WINE_SRC=$WINE_SRC" >> "$GITHUB_ENV"
 
+      - name: Apply OneClick's Wine patches (Scripts/patches/wine)
+        run: ./Scripts/apply-wine-patches.sh "$WINE_SRC"
+
       - name: Build pinned SDL (winebus game-controller backend)
         run: |
           set -eo pipefail

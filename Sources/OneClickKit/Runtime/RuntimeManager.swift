@@ -192,10 +192,14 @@ public actor RuntimeManager {
         return dxmt.first
     }
 
-    /// The source version embedded in a wine runtime name (`wine-cx-26.2.0` → `26.2.0`), or nil.
+    /// The CrossOver source version embedded in a wine runtime name, or nil: `wine-cx-26.2.0` → `26.2.0`, and a
+    /// patched build's suffix is dropped (`wine-cx-26.3.0-oc1` → `26.3.0`), since it is ABI-paired with the
+    /// DXMT built against the same CrossOver source.
     static func wineCXVersion(_ runtimeName: String) -> String? {
         let prefix = "wine-cx-"
-        return runtimeName.hasPrefix(prefix) ? String(runtimeName.dropFirst(prefix.count)) : nil
+        guard runtimeName.hasPrefix(prefix) else { return nil }
+        let rest = runtimeName.dropFirst(prefix.count)
+        return rest.split(separator: "-", maxSplits: 1).first.map(String.init)
     }
 
     // MARK: - DXVK (reuses the same download+extract+harden engine as Wine/DXMT)
