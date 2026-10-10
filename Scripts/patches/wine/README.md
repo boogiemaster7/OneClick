@@ -1,7 +1,9 @@
 # Wine patch series
 
 Applied in lexical order to the pristine CrossOver source (`CROSSOVER_VERSION` in `versions.env`) by
-`Scripts/apply-wine-patches.sh`, from both `Scripts/build-wine.sh` and `.github/workflows/build-wine.yml`.
+`Scripts/apply-wine-patches.sh`. OneClick's runtime is built by `Scripts/build-wine-overlay.sh`
+(`.github/workflows/build-wine-overlay.yml`): upstream's published runtime with the unix-side modules these
+patches touch rebuilt and swapped in (`share/oneclick/build-info.txt` in the runtime lists every hash).
 A patch that doesn't apply stops the build. Every patch keeps its upstream header (author, description,
 measurements). All are LGPL-2.1-or-later, like Wine.
 

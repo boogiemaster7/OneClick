@@ -1,0 +1,65 @@
+# Build OneClick's Wine runtime with Scripts/build-wine-overlay.sh and publish it as a release
+# (wine-cx-<CROSSOVER_VERSION>-<WINE_OVERLAY_SUFFIX>, e.g. wine-cx-26.3.0-oc1). Every input is pinned in
+# versions.env; the script fails closed on a checksum mismatch. See Scripts/patches/wine/README.md.
+#
+# Runs on macos-26 because the overlay matches the base runtime's SDK (WINE_OVERLAY_SDK_VERSION=26.5), which
+# that image ships with Xcode 26.5. The toolchain runs natively on arm64 and cross-compiles to x86_64.
+name: Build Wine overlay (OneClick runtime)
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish the release (otherwise just build and upload the artifact)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wine-overlay
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Select Xcode 26.5 (macOS 26.5 SDK, matches the base runtime)
+        run: |
+          set -eo pipefail
+          sudo xcode-select -s /Applications/Xcode_26.5.app
+          xcrun --sdk macosx26.5 --show-sdk-path
+
+      - name: Build
+        run: ./Scripts/build-wine-overlay.sh "$RUNNER_TEMP/overlay"
+
+      - name: Read release metadata
+        id: meta
+        run: |
+          set -eo pipefail
+          set -a; . ./versions.env; set +a
+          echo "tag=wine-cx-${CROSSOVER_VERSION}-${WINE_OVERLAY_SUFFIX}" >> "$GITHUB_OUTPUT"
+          cp "$RUNNER_TEMP/overlay/runtime/share/oneclick/build-info.txt" dist/build-info.txt
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ${{ steps.meta.outputs.tag }}
+          path: |
+            dist/wine.tar.xz
+            dist/wine.tar.xz.sha256
+            dist/build-info.txt
+
+      - name: Publish release
+        if: ${{ inputs.publish }}
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.tag }}
+          body_path: dist/build-info.txt
+          files: |
+            dist/wine.tar.xz
+            dist/wine.tar.xz.sha256

@@ -1,3 +1,6 @@
+# SUPERSEDED in OneClick by build-wine-overlay.yml: this full x86_64 build installs an x86_64 Homebrew under
+# Rosetta for gnutls/gstreamer, which Homebrew no longer supports ("only supported on Apple Silicon", 2026-10).
+# Kept for reference and for when x86_64 dependencies are available again.
 name: Build Wine (CrossOver source)
 
 # Self-reliant Wine pipeline: build CrossOver's Wine from CrossOver's own FOSS source (LGPL, the same
