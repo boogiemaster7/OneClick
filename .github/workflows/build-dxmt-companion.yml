@@ -1,0 +1,149 @@
+# Build the "DXMT companion": DXMT from Highball's fork (github.com/gauthierpiarrette/dxmt, LGPL-2.1+), whose
+# DXMT_ALLOW_CROSS_PROCESS_SWAPCHAIN opt-in lets a 32-bit CEF launcher (Ubisoft Connect, …) present into its
+# browser process's window together with Wine patch 0003 (Wine bug 60263). OneClick overlays the companion's
+# 32-bit DLLs + winemetal into the D3DMetal runtime, so 32-bit helper processes render through DXMT while
+# 64-bit games stay on D3DMetal (Apple ships no 32-bit D3DMetal).
+#
+# The recipe follows DXMT upstream's own CI (.github/workflows/ci.yml): LLVM 15.0.7 built from source for
+# x86_64 macOS (cached), gcc mingw-w64 for the PE side, Xcode's Metal compiler for the built-in shaders. It builds
+# against OneClick's own Wine release so winemetal.so links the exact winemac.so/ntdll.so it runs with.
+name: Build DXMT companion (32-bit DXMT for launchers)
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish the release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+env:
+  DXMT_FORK_REPO: gauthierpiarrette/dxmt
+  # Fork main: upstream 3Shain/dxmt at 4ddb20e (2026-09-03) + the 4 Highball commits (cross-process opt-in,
+  # SwapDeviceContextState, IDXGISurface for 2D textures).
+  DXMT_FORK_REF: 7421db2076b7e4ef36be167294023feefbe7ba7e
+  LLVM_VERSION: llvmorg-15.0.7
+  WINE_TAG: wine-cx-26.3.0-oc1
+  MESON_VERSION: "1.10.0"
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 240
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Fetch DXMT fork source (pinned)
+        run: |
+          set -eo pipefail
+          git init -q "$RUNNER_TEMP/dxmt" && cd "$RUNNER_TEMP/dxmt"
+          git remote add origin "https://github.com/${DXMT_FORK_REPO}.git"
+          git fetch -q --depth 1 origin "$DXMT_FORK_REF" && git checkout -q FETCH_HEAD
+          git submodule update -q --init --recursive --depth 1
+          test "$(git rev-parse HEAD)" = "$DXMT_FORK_REF"
+          echo "DXMT_SRC=$RUNNER_TEMP/dxmt" >> "$GITHUB_ENV"
+
+      - name: Cache LLVM (x86_64 macOS build)
+        id: llvm-cache
+        uses: actions/cache@v5
+        with:
+          key: llvm-darwin-${{ env.LLVM_VERSION }}-x86_64-macos-v1
+          path: ${{ runner.temp }}/llvm-darwin
+
+      - name: Build LLVM 15 for x86_64 macOS (cache miss only)
+        if: steps.llvm-cache.outputs.cache-hit != 'true'
+        run: |
+          set -eo pipefail
+          brew install ninja cmake >/dev/null 2>&1 || true
+          git clone -q --depth 1 --branch "$LLVM_VERSION" https://github.com/llvm/llvm-project.git "$RUNNER_TEMP/llvm-project"
+          cmake -B "$RUNNER_TEMP/llvm-build" -S "$RUNNER_TEMP/llvm-project/llvm" \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/llvm-darwin" \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 -DLLVM_HOST_TRIPLE=x86_64-apple-darwin \
+            -DLLVM_ENABLE_ASSERTIONS=On -DLLVM_ENABLE_ZSTD=Off -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_TARGETS_TO_BUILD="" -DLLVM_BUILD_TOOLS=Off \
+            -DLLVM_VERSION_PRINTER_SHOW_HOST_TARGET_INFO=Off -G Ninja
+          cmake --build "$RUNNER_TEMP/llvm-build"
+          cmake --install "$RUNNER_TEMP/llvm-build"
+
+      - name: Toolchain (mingw-w64, meson, Metal compiler)
+        run: |
+          set -eo pipefail
+          brew install mingw-w64 ninja >/dev/null
+          pip3 install "meson==${MESON_VERSION}" --break-system-packages
+          printf 'kernel void _p() {}' > "$RUNNER_TEMP/p.metal"
+          xcrun -sdk macosx metal -c "$RUNNER_TEMP/p.metal" -o "$RUNNER_TEMP/p.air"   # hard-fail without Metal
+          xcodebuild -version
+
+      - name: Download OneClick's Wine (${{ env.WINE_TAG }})
+        run: |
+          set -eo pipefail
+          gh release download "$WINE_TAG" --repo "$GITHUB_REPOSITORY" --pattern 'wine.tar.xz*' --dir "$RUNNER_TEMP/wine-dl"
+          ( cd "$RUNNER_TEMP/wine-dl" && test "$(shasum -a 256 wine.tar.xz | awk '{print $1}')" = "$(cat wine.tar.xz.sha256)" )
+          mkdir -p "$RUNNER_TEMP/wine" && tar -xJf "$RUNNER_TEMP/wine-dl/wine.tar.xz" -C "$RUNNER_TEMP/wine"
+          test -f "$RUNNER_TEMP/wine/lib/wine/x86_64-unix/winemac.so"
+
+      - name: Build x86_64 (PE DLLs + winemetal.so)
+        run: |
+          set -eo pipefail
+          cd "$DXMT_SRC"
+          # winemetal.so is a `native: true` target: force the build machine compiler to x86_64 (the Wine it links
+          # into is x86_64 under Rosetta), matching the x86_64 LLVM above.
+          printf "[binaries]\nc = ['/usr/bin/clang', '-arch', 'x86_64']\ncpp = ['/usr/bin/clang++', '-arch', 'x86_64']\n" > osx-x86_64.txt
+          meson setup --cross-file build-win64.txt --native-file osx-x86_64.txt \
+            -Dnative_llvm_path="$RUNNER_TEMP/llvm-darwin" -Dwine_install_path="$RUNNER_TEMP/wine" \
+            build64 --buildtype release --prefix "$DXMT_SRC/install64" --strip
+          meson compile -C build64
+          meson install -C build64
+
+      - name: Build i386 (PE DLLs)
+        run: |
+          set -eo pipefail
+          cd "$DXMT_SRC"
+          meson setup --cross-file build-win32.txt -Dwine_install_path="$RUNNER_TEMP/wine" \
+            build32 --buildtype release --prefix "$DXMT_SRC/install32" --strip
+          meson compile -C build32
+          meson install -C build32
+
+      - name: Package (OneClick DXMT runtime layout)
+        id: pkg
+        run: |
+          set -eo pipefail
+          OUT="$RUNNER_TEMP/companion"; mkdir -p "$OUT"/{x86_64-unix,x86_64-windows,i386-windows}
+          find "$DXMT_SRC/install64" -name winemetal.so -exec cp {} "$OUT/x86_64-unix/" \;
+          for d in d3d11 dxgi d3d10core winemetal; do
+            find "$DXMT_SRC/install64" -path "*x86_64-windows*" -name "$d.dll" -exec cp {} "$OUT/x86_64-windows/" \;
+            find "$DXMT_SRC/install32" -path "*i386-windows*" -name "$d.dll" -exec cp {} "$OUT/i386-windows/" \;
+          done
+          file "$OUT/x86_64-unix/winemetal.so" | grep -q x86_64
+          for d in d3d11 dxgi d3d10core winemetal; do test -f "$OUT/i386-windows/$d.dll"; test -f "$OUT/x86_64-windows/$d.dll"; done
+          {
+            echo "OneClick DXMT companion"
+            echo "Source: ${DXMT_FORK_REPO} @ ${DXMT_FORK_REF} (LGPL-2.1-or-later)"
+            echo "Built against: ${WINE_TAG}; LLVM ${LLVM_VERSION}; $(xcodebuild -version | head -1)"
+            (cd "$OUT" && find . -type f | sort | while read -r f; do echo "  $f  $(shasum -a 256 "$f" | awk '{print $1}')"; done)
+          } > "$OUT/build-info.txt"
+          cp "$DXMT_SRC/LICENSE" "$OUT/LICENSE-DXMT"
+          mkdir -p dist && ( cd "$OUT" && tar -cJf "$GITHUB_WORKSPACE/dist/dxmt.tar.xz" . )
+          ( cd dist && shasum -a 256 dxmt.tar.xz | awk '{print $1}' > dxmt.tar.xz.sha256 && cp "$OUT/build-info.txt" . )
+          echo "tag=dxmt-companion-${DXMT_FORK_REF:0:7}-cx26.3.0-oc1" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ${{ steps.pkg.outputs.tag }}
+          path: dist/
+
+      - name: Publish release
+        if: ${{ inputs.publish }}
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.pkg.outputs.tag }}
+          name: ${{ steps.pkg.outputs.tag }}
+          body_path: dist/build-info.txt
+          files: |
+            dist/dxmt.tar.xz
+            dist/dxmt.tar.xz.sha256
