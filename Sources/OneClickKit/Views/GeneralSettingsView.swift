@@ -30,6 +30,12 @@ struct GeneralSettingsView: View {
                 get: { env.backendSettings.config.retinaMode },
                 set: { on in Task { await env.setSteamBottleRetina(on) } }))
                 .disabled(!configured || env.bottleToolsBusy)
+            Toggle("Smooth registry saves (experimental)", isOn: Binding(
+                get: { env.backendSettings.config.smoothRegistrySaves },
+                set: { on in Task { await env.setSmoothRegistrySaves(on) } }))
+                .disabled(!configured || WineserverTuning.bundledDylib == nil)
+                .help("Postpones Wine's large registry saves while a game is busy (a ~240 ms stall every "
+                      + "30–60 s) and marks game network traffic as low-latency. Uses mac-gaming-fixes (MIT).")
             if let message = env.bottleToolsMessage {
                 Text(message).font(.caption).foregroundStyle(.secondary)
             }

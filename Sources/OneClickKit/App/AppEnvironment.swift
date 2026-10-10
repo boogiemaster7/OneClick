@@ -165,6 +165,36 @@ public final class AppEnvironment {
         // The Steam client runs on the base wine (CEF; a co-resident game picks the variant runtime).
         // updateWine on the bottle VM also updates its session's wine.
         steamBottleVM.updateWine(config.wineBinaryPath)
+        applyWineserverTuning(config)
+    }
+
+    /// Install or remove the opt-in wineserver wrapper (`WineserverTuning`) on the base runtime to match the
+    /// setting. Off-main and best-effort: a failure leaves the plain wineserver, which always works. Takes
+    /// effect the next time the bottle's wineserver starts (Steam and games all closed).
+    private func applyWineserverTuning(_ config: BackendConfig) {
+        guard let wine = config.wineBinaryPath else { return }
+        let enabled = config.smoothRegistrySaves
+        let log = paths.logsDir.appendingPathComponent("wineserver-regsave.log")
+        Task.detached(priority: .utility) {
+            let tuning = WineserverTuning(wineBinary: wine)
+            if enabled, let dylib = WineserverTuning.bundledDylib {
+                try? FileManager.default.createDirectory(
+                    at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
+                _ = try? tuning.install(dylib: dylib, regsaveLog: log)
+            } else if !enabled {
+                _ = try? tuning.uninstall()
+            }
+        }
+    }
+
+    /// Turn the experimental wineserver stall fix on or off, persist it, and (un)install the wrapper.
+    public func setSmoothRegistrySaves(_ on: Bool) async {
+        backendSettings.config.smoothRegistrySaves = on
+        await backendSettings.save()
+        applyWineserverTuning(backendSettings.config)
+        bottleToolsMessage = on
+            ? "Stall fix on — applies once Steam and all games are closed and relaunched."
+            : "Stall fix off — applies once Steam and all games are closed and relaunched."
     }
 
     /// Load persisted config and populate the UI. Idempotent.

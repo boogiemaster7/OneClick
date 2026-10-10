@@ -45,5 +45,8 @@ shopt -u nullglob
 
 [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/"
 
+# Native helpers injected into the (x86_64, Rosetta) Wine runtime — see Sources/OneClickKit/Runtime/WineserverTuning.swift.
+clang -arch x86_64 -dynamiclib -O2 -Wall -o "$APP/Contents/Resources/wineserver_fix.dylib" Scripts/native/wineserver_fix.c
+
 ./Scripts/sign.sh "$APP"
 echo "==> Built $APP"

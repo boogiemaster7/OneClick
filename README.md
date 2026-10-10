@@ -100,6 +100,8 @@ published by Silo (`RUNTIME_GITHUB_REPO` in `versions.env`). See [docs/WINE-BUIL
   D3DMetal.
 - **[highball-db](https://github.com/gauthierpiarrette/highball-db)** (CC0), for game compatibility
   data.
+- **[mac-gaming-fixes](https://github.com/been-earth/mac-gaming-fixes)** (MIT) by been-earth: the optional
+  wineserver registry-save / Wi-Fi latency fix (`Scripts/native/wineserver_fix.c`).
 
 ## License
 

@@ -27,6 +27,9 @@ public struct BackendConfig: Codable, Sendable, Hashable {
     /// `HKCU\Software\Wine\Mac Driver\RetinaMode` (crisp native rendering) plus its DPI companion
     /// `HKCU\Control Panel\Desktop\LogPixels` (192 so the UI isn't tiny) — see `WineTools.setRetinaMode`.
     public var retinaMode: Bool
+    /// Opt-in, experimental: wrap the base runtime's wineserver with the third-party registry-save / UDP fix
+    /// (`WineserverTuning`). Off by default until it has been verified on device.
+    public var smoothRegistrySaves: Bool
 
     public init(
         wineBinaryPath: URL? = nil,
@@ -37,7 +40,8 @@ public struct BackendConfig: Codable, Sendable, Hashable {
         dxmtRuntimeName: String? = nil,
         dxvkLibDirPath: URL? = nil,
         dxvkRuntimeName: String? = nil,
-        retinaMode: Bool = false
+        retinaMode: Bool = false,
+        smoothRegistrySaves: Bool = false
     ) {
         self.wineBinaryPath = wineBinaryPath
         self.wineRuntimeName = wineRuntimeName
@@ -48,11 +52,12 @@ public struct BackendConfig: Codable, Sendable, Hashable {
         self.dxvkLibDirPath = dxvkLibDirPath
         self.dxvkRuntimeName = dxvkRuntimeName
         self.retinaMode = retinaMode
+        self.smoothRegistrySaves = smoothRegistrySaves
     }
 
     private enum CodingKeys: String, CodingKey {
         case wineBinaryPath, wineRuntimeName, gptkLibDirPath, gptkRuntimeName
-        case dxmtLibDirPath, dxmtRuntimeName, dxvkLibDirPath, dxvkRuntimeName, retinaMode
+        case dxmtLibDirPath, dxmtRuntimeName, dxvkLibDirPath, dxvkRuntimeName, retinaMode, smoothRegistrySaves
     }
 
     /// Tolerant decode (mirrors `AppState`): every field defaults if absent, so adding one never makes an
@@ -68,6 +73,7 @@ public struct BackendConfig: Codable, Sendable, Hashable {
         dxvkLibDirPath = try c.decodeIfPresent(URL.self, forKey: .dxvkLibDirPath)
         dxvkRuntimeName = try c.decodeIfPresent(String.self, forKey: .dxvkRuntimeName)
         retinaMode = try c.decodeIfPresent(Bool.self, forKey: .retinaMode) ?? false
+        smoothRegistrySaves = try c.decodeIfPresent(Bool.self, forKey: .smoothRegistrySaves) ?? false
     }
 
     /// Whether games can be launched (a wine binary is set).
