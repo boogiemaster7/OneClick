@@ -6,6 +6,8 @@ import Foundation
 /// that injects graphics libraries into the (already-provisioned) bottle prefix and spawns the game.
 public struct LaunchOrchestrator: Sendable {
     private let runner: ProcessRunning
+    /// The process runner, for orchestrator extensions in other files (e.g. `runInstallScript`).
+    var processRunner: ProcessRunning { runner }
     private let linker: GraphicsLinker
     private let presenceInstaller: SteamPresenceInstaller
 

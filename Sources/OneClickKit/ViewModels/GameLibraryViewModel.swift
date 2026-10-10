@@ -280,6 +280,7 @@ public final class GameLibraryViewModel {
                 setStatus("\(game.name) needs Steam, which couldn't start\(why).")
                 return
             }
+            await applyInstallScriptIfNeeded(game)
             // PERSIST the virtual-desktop decision before launching. Deriving it from the previous log
             // alone oscillates: a wrapped launch runs the game under `explorer /desktop=`, whose child's
             // output never reaches OneClick's log, so the next launch sees no failure, runs UNWRAPPED, and fails
@@ -320,6 +321,36 @@ public final class GameLibraryViewModel {
         } catch {
             setStatus("\(game.name): \(Self.resolveMessage(error))")
         }
+    }
+
+    /// Apply the game's Steam install script (registry keys + first-run installers such as Ubisoft Connect) the
+    /// first time it's played through OneClick — Steam only runs it from its own Play button. Once per script
+    /// version (marker in the bottle); best-effort, so a failing redistributable never blocks the launch.
+    /// Problems are written to `Logs/<appID>-installscript.log`.
+    private func applyInstallScriptIfNeeded(_ game: SteamApp) async {
+        let installURL = game.installURL
+        guard let scriptURL = SteamInstallScript.locate(in: installURL),
+              let text = try? String(contentsOf: scriptURL, encoding: .utf8),
+              let tool = try? BottleResolver(paths: paths).steamTool(config: backend) else { return }
+        let marker = tool.prefix.appendingPathComponent(
+            ".oneclick-installed/installscript-\(game.appID)-\(SteamInstallScript.fingerprint(text))")
+        guard !FileManager.default.fileExists(atPath: marker.path) else { return }
+        let windowsDir = SteamInstallScript.windowsPath(for: installURL, prefix: tool.prefix)
+        guard let script = try? SteamInstallScript.parse(text, installDirWindows: windowsDir),
+              !script.registry.isEmpty || !script.steps.isEmpty else { return }
+
+        setStatus("Setting up \(game.name) for its first launch…")
+        let outcome = await orchestrator.runInstallScript(
+            script, installURL: installURL, prefix: tool.prefix, wine: tool.wineBinary)
+        let report = (["install script \(scriptURL.lastPathComponent) @ \(Date())",
+                       "registry values written: \(outcome.registryWritten)",
+                       "steps run: \(outcome.stepsRun.joined(separator: ", "))"]
+                      + outcome.problems.map { "problem: \($0)" }).joined(separator: "\n") + "\n"
+        try? FileManager.default.createDirectory(at: paths.logsDir, withIntermediateDirectories: true)
+        try? report.write(to: paths.logsDir.appendingPathComponent("\(game.appID)-installscript.log"),
+                          atomically: true, encoding: .utf8)
+        try? FileManager.default.createDirectory(at: marker.deletingLastPathComponent(), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: marker.path, contents: Data(report.utf8))
     }
 
     /// Open `winecfg` for the Steam bottle prefix (prefix-wide, so not per-game).
