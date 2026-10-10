@@ -28,6 +28,20 @@ struct GameProfileTests {
         #expect(env["D3DM_ENABLE_METALFX"] == nil)   // experimental until measured
     }
 
+    @Test("Anno 1800 profile: D3DMetal, Steam-edition flag, explicit exe, raytracing off, 60 fps cap")
+    func anno1800Profile() throws {
+        let profile = try #require(GameProfileCatalog.bundled.profile(for: 916440))
+        #expect(profile.id == "anno-1800")
+        #expect(profile.renderer == .gptk)
+        #expect(profile.args == ["-uplay_steam_mode"])          // what Steam passes; OneClick must too
+        #expect(profile.executable == "Bin/Win64/Anno1800.exe")
+        let env = profile.env.environment(graphics: .gptk)
+        #expect(env["D3DM_SUPPORT_DXR"] == "0")
+        #expect(env["D3DM_MAX_FPS"] == "60")
+        #expect(env["WINEMSYNC"] == "1")
+        #expect(profile.seededConfig().customArgs == ["-uplay_steam_mode"])
+    }
+
     @Test("An unsaved game starts from its profile; a saved config wins; others get plain defaults")
     func configLookupPrecedence() throws {
         let profile = try #require(GameProfileCatalog.bundled.profile(for: 1363080))
