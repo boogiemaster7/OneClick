@@ -30,8 +30,12 @@ public struct AppState: Codable, Sendable, Hashable {
     }
 
     /// Existing config for a title, or a fresh default if none is stored yet. Keyed by `appID`.
-    public func config(for appID: Int) -> GameConfig {
-        games.first { $0.appID == appID } ?? GameConfig(appID: appID)
+    /// The saved config for a game, or — when the user has never saved one — its profile's recommended
+    /// defaults (`GameProfileCatalog.bundled`), or plain defaults for a game with no profile.
+    public func config(for appID: Int, profiles: GameProfileCatalog = .bundled) -> GameConfig {
+        games.first { $0.appID == appID }
+            ?? profiles.profile(for: appID)?.seededConfig()
+            ?? GameConfig(appID: appID)
     }
 
     /// Insert or replace a game's config (matched by `appID`).

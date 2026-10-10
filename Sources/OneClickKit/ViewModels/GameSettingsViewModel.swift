@@ -11,10 +11,24 @@ public final class GameSettingsViewModel {
     /// does — a hint learned under a superseded GPTK is re-probed, and the sheet must agree.
     private let gptkRuntimeName: String?
 
-    public init(config: GameConfig, configStore: ConfigStore, gptkRuntimeName: String? = nil) {
+    /// The game's bundled profile, if OneClick has one.
+    public let profile: GameProfile?
+
+    public init(config: GameConfig, configStore: ConfigStore, gptkRuntimeName: String? = nil,
+                profile: GameProfile? = nil) {
         self.config = config
         self.configStore = configStore
         self.gptkRuntimeName = gptkRuntimeName
+        self.profile = profile ?? GameProfileCatalog.bundled.profile(for: config.appID)
+    }
+
+    /// Whether the edited settings match the profile's recommendation.
+    public var usesRecommended: Bool { profile.map { $0.matches(config) } ?? false }
+
+    /// Replace the edited settings with the profile's recommendation (takes effect on Save).
+    public func useRecommended() {
+        guard let profile else { return }
+        config = profile.applied(to: config)
     }
 
     /// Whether Automatic is currently routing this game to a reactively-learned backend (so the sheet can

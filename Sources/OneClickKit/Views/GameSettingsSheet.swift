@@ -46,6 +46,24 @@ struct GameSettingsSheet: View {
             if let message = vm.errorMessage {
                 Section { Text(message).foregroundStyle(.red) }
             }
+            if let profile = vm.profile {
+                Section {
+                    Text(profile.notes).font(.callout)
+                    HStack {
+                        if vm.usesRecommended {
+                            Label("Using recommended settings", systemImage: "checkmark.seal")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Button("Use recommended settings") { vm.useRecommended() }
+                        }
+                        Spacer()
+                        Text(profile.lastVerified.map { "Verified \($0)" } ?? "Not yet verified on device")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("OneClick profile")
+                }
+            }
             Section {
                 Picker("Graphics", selection: $vm.config.graphics) {
                     ForEach(GraphicsChoice.allCases) { Text($0.displayName).tag($0) }
