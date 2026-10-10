@@ -106,6 +106,22 @@ public struct D3DProfile: Sendable, Equatable {
     /// memory-mapped header read (`WindowsExecutable.importedDLLs`), so this is cheap in practice.
     private static let maxFilesScanned = 256
 
+    /// `<root>/<Project>/Binaries/Win64/*-Shipping.exe` for an Unreal bootstrap stub at `<root>/<Game>.exe`.
+    /// Only one directory level is listed at each step, so this costs a handful of `readdir`s.
+    static func unrealShippingExecutables(besideStub exe: URL, fileManager: FileManager = .default) -> [URL] {
+        let root = exe.deletingLastPathComponent()
+        let projects = (try? fileManager.contentsOfDirectory(
+            at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
+        var found: [URL] = []
+        for project in projects {
+            let win64 = project.appendingPathComponent("Binaries/Win64", isDirectory: true)
+            let entries = (try? fileManager.contentsOfDirectory(
+                at: win64, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
+            found += entries.filter { $0.lastPathComponent.lowercased().hasSuffix("-shipping.exe") }
+        }
+        return found.sorted { $0.path < $1.path }
+    }
+
     /// Whether a DLL is a known redistributable shipped alongside the game rather than part of it.
     static func isRedistributableModule(_ name: String) -> Bool {
         let n = name.lowercased()
@@ -138,6 +154,14 @@ public struct D3DProfile: Sendable, Equatable {
 
         absorb(exe)                                   // the executable itself, first
         if isComplete { return profile }
+
+        // Unreal Engine games launch through a thin bootstrap stub (`<Game>.exe` at the install root) that
+        // starts `<Project>/Binaries/Win64/<Project>-Win64-Shipping.exe` — the real renderer, three levels
+        // down, beyond the DLL walk below. Read those shipping executables directly.
+        for shipping in unrealShippingExecutables(besideStub: exe, fileManager: fileManager) {
+            absorb(shipping)
+            if isComplete { return profile }
+        }
 
         // Then the DLLs around it, nearest first — so the common cases (UnityPlayer.dll, the UE Win64 dir)
         // are found long before the file cap can bite.

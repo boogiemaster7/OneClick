@@ -55,6 +55,11 @@ enum BackendChooser {
             if let learned, learned != .gptk { return learned }
             return .dxmt
         }
+        // A learned hint is re-checked against the CURRENT profile: one recorded before the scan could see what
+        // the game needs (e.g. a D3D12 game whose renderer sits behind an Unreal bootstrap stub) must not keep
+        // routing it to a backend that structurally can't run it — DXMT has no D3D12.
+        if let learned, learned == .dxmt, !dxmtMightHelp(profile: profile) { return .gptk }
+        if let learned, learned == .dxvk, !dxvkMightHelp(profile: profile) { return .gptk }
         return learned ?? .gptk                                        // 64-bit Automatic: learned hint, else GPTK
     }
 

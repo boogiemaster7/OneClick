@@ -28,7 +28,14 @@ public enum GraphicsFallback: Sendable {
         // on this stack reports the real Metal GPU ("Apple M4 Pro"). Captured verbatim from Bloons TD 6:
         //     Renderer: AMD Compatibility Mode (ID=0x66af)   [Vendor: ATI]
         // Positive-only, so a game that never logs its adapter just stays `.unknown` — never a false failure.
-        case .gptk: ["AMD Compatibility Mode"]
+        //
+        // `[metal-shaderconverter]` is the prefix of Apple's Metal Shader Converter, which D3DMetal runs to
+        // turn the game's DXIL into Metal — wined3d and DXMT never use it. Captured verbatim from Manor Lords
+        // (UE5, DX12) on GPTK 4.0b2, 2026-10-09, in a log that ALSO carried wined3d's "Using the Vulkan
+        // renderer" probe line; without this entry that run was misread as a GPTK failure and the game was
+        // routed to DXMT, which has no D3D12 and crashed it.
+        //     [metal-shaderconverter] Warning: Undefined: Shader might rely on forward progress/persistent thread
+        case .gptk: ["AMD Compatibility Mode", "[metal-shaderconverter]"]
         // DXMT is a DXVK FORK and inherits its logger, so it prints DXVK's wording — NOT the
         // "DXMT: created Metal device" string this used to look for, which occurs zero times in a real,
         // working DXMT log (feature level 11_1, device created). That invented signature meant DXMT
