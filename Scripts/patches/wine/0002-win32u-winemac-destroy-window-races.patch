@@ -1,0 +1,239 @@
+From e1e929177342e7697ace4c4d59bf887ce6664b4a Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Alexander=20Thei=C3=9Fen?= <alex@theissen.io>
+Date: Tue, 8 Sep 2026 13:16:37 +0400
+Subject: [PATCH] win32u, winemac: Fix races when destroying windows from
+ several threads.
+
+winemac: Release the D3DMetal client surfaces outside the window data lock:
+
+macdrv_DestroyWindow held the window data (win_data_mutex, from
+get_win_data) while it released the CW HACK 22435 array of D3DMetal
+client surfaces. The array's release callback is client_surface_release,
+which takes win32u's surfaces_lock unconditionally and, for a surface
+still attached, calls the driver's detach, which asks for the window data
+again. Every other holder of surfaces_lock takes the two locks the other
+way round: detach_client_surfaces and update_client_surfaces hold it and
+call into the driver, which takes win_data_mutex. So a thread destroying
+its window and another thread creating, moving or destroying its own could
+deadlock inside the driver; a test suite that drives one device per thread
+hit it in most runs, with every thread parked in one of those two paths.
+
+Take the array out of the window data, release the data, and only then
+release the array. A surface still attached at that point detaches
+against a window whose data is gone, which macdrv_client_surface_detach
+already handles.
+
+winemac: Release a window's last reference on the main thread:
+
+AppKit allows an NSView to be created and destroyed only on the main
+thread, and keeps a window's own data structures on that thread as well:
+a window's dealloc tears down its frame view, which is an NSView walking
+the view hierarchy it leaves. The release that drops the last reference
+to a WineWindow therefore has to run on the main thread, whatever thread
+holds it.
+
+macdrv_destroy_cocoa_window closed the window inside a synchronous
+main-thread request and then released the creator's reference on the
+calling Wine thread. The request block's captured reference is released
+by PerformRequest on the main thread, so the two last holders released
+concurrently and whichever went second ran -[NSWindow dealloc]: on the
+Wine thread, -[NSThemeFrame dealloc] reached -[NSView _setSuperview:]
+while the main thread popped its request pool, and faulted inside
+AppKit. Hand that release to the main thread as an asynchronous request.
+The request that closed the window has already completed, so the release
+is ordered after the close.
+
+The references events and queries hold on their window are released by
+whichever thread drops the last reference to the event or query, which
+for an event processed by a Wine thread is that thread. Those releases
+cannot be the last while the creator's reference exists, so they route
+to the main thread only once the window is closing: that covers an event
+posted for the window between its close and its dealloc, a query in
+flight when its handler destroys the window, and the events left in a
+queue at thread exit. The WINDOW_GOT_FOCUS tried-window set holds
+windows of any thread in any state, so off the main thread the set as a
+whole is released there; focus events are rare enough for that to be
+unconditional.
+
+Audited and left as they are: latentChildWindows, latentParentWindow
+and the child window list are mutated only inside main-thread requests
+and window delegate callbacks, and the dealloc that releases them now
+runs on the main thread; macdrv_create_cocoa_window retains on the main
+thread; macdrv_dispose_view and macdrv_view_release_metal_view release
+their view inside OnMainThread. WineOpenGLContext's dealloc releases its
+view on the disposing thread, which is the OpenGL path and untouched
+here.
+
+At process exit an asynchronous request queued after the main thread has
+left its run loop is appended to the request array and never runs, so
+the window leaks with the process instead of faulting; OnMainThreadAsync
+waits only on the serial queue guarding that array, never on the main
+thread, while the synchronous close request in the same function already
+waits on the main thread and remains the stricter of the two.
+
+win32u: Preserve reused client handles during window destruction (#2):
+
+The server can reuse a window handle index before its client slot is
+cleared. Clear the slot only while it still points at that window,
+matching free_user_handle.
+---
+ dlls/win32u/window.c            |  3 ++-
+ dlls/winemac.drv/cocoa_event.m  | 44 ++++++++++++++++++++++++++++++---
+ dlls/winemac.drv/cocoa_window.h |  3 +++
+ dlls/winemac.drv/cocoa_window.m |  9 ++++++-
+ dlls/winemac.drv/window.c       | 11 ++++++++-
+ 5 files changed, 64 insertions(+), 6 deletions(-)
+
+diff --git a/dlls/win32u/window.c b/dlls/win32u/window.c
+index 55daac42b83..cf227193443 100644
+--- a/dlls/win32u/window.c
++++ b/dlls/win32u/window.c
+@@ -5313,7 +5313,8 @@ static void free_window_handle( HWND hwnd )
+         {
+             req->handle = wine_server_user_handle( hwnd );
+             wine_server_call( req );
+-            set_user_handle_ptr( hwnd, NULL );
++            /* The server may have reused the handle for another object. */
++            InterlockedCompareExchangePointer( &client_objects[USER_HANDLE_TO_INDEX(hwnd)], NULL, win );
+         }
+         SERVER_END_REQ;
+         user_unlock();
+diff --git a/dlls/winemac.drv/cocoa_event.m b/dlls/winemac.drv/cocoa_event.m
+index 7c86fc1d5ff..055f225f170 100644
+--- a/dlls/winemac.drv/cocoa_event.m
++++ b/dlls/winemac.drv/cocoa_event.m
+@@ -651,6 +651,44 @@ int macdrv_copy_event_from_queue(macdrv_event_queue queue,
+     return event;
+ }
+ 
++/***********************************************************************
++ *              release_window
++ *
++ * Drop the reference an event or a query holds on its window.  A window
++ * and its views may only be destroyed on the main thread, so a release
++ * that can be the last one is handed to the main thread.  While the
++ * window is not closing, the reference taken when it was created still
++ * exists and the release here cannot be the last; once it is closing,
++ * that reference is gone or about to go, and a Wine thread's release of
++ * an event posted after the close, or of a query in flight during the
++ * close, could otherwise dealloc the window on that thread.
++ */
++static void release_window(WineWindow* window)
++{
++    if (window && window.closing && ![NSThread isMainThread])
++        OnMainThreadAsync(^{
++            [window release];
++        });
++    else
++        [window release];
++}
++
++/***********************************************************************
++ *              release_window_set
++ *
++ * Drop a set of windows.  The set may hold windows of other threads
++ * in any state, so off the main thread it is released there.
++ */
++static void release_window_set(NSMutableSet* windows)
++{
++    if (windows && ![NSThread isMainThread])
++        OnMainThreadAsync(^{
++            [windows release];
++        });
++    else
++        [windows release];
++}
++
+ /***********************************************************************
+  *              macdrv_release_event
+  *
+@@ -679,11 +717,11 @@ void macdrv_release_event(macdrv_event *event)
+                 macdrv_release_query(event->query_event.query);
+                 break;
+             case WINDOW_GOT_FOCUS:
+-                [(NSMutableSet*)event->window_got_focus.tried_windows release];
++                release_window_set((NSMutableSet*)event->window_got_focus.tried_windows);
+                 break;
+         }
+ 
+-        [(WineWindow*)event->window release];
++        release_window((WineWindow*)event->window);
+         free(event);
+     }
+ }
+@@ -731,7 +769,7 @@ void macdrv_release_query(macdrv_query *query)
+                     CFRelease(query->pasteboard_data.type);
+                 break;
+         }
+-        [(WineWindow*)query->window release];
++        release_window((WineWindow*)query->window);
+         free(query);
+     }
+ }
+diff --git a/dlls/winemac.drv/cocoa_window.h b/dlls/winemac.drv/cocoa_window.h
+index 23ecd6dae2c..8203adba909 100644
+--- a/dlls/winemac.drv/cocoa_window.h
++++ b/dlls/winemac.drv/cocoa_window.h
+@@ -93,6 +93,9 @@
+ @property (readonly, nonatomic) BOOL floating;
+ @property (readonly, getter=isFullscreen, nonatomic) BOOL fullscreen;
+ @property (readonly, getter=isFakingClose, nonatomic) BOOL fakingClose;
++/* Set on the main thread when the window is being destroyed. From then on
++   the references that events and queries hold may be the last ones. */
++@property (readonly, nonatomic) BOOL closing;
+ @property (readonly, nonatomic) NSRect wine_fractionalFrame;
+ 
+ /* Whether this window, when ordered in and not miniaturized, would appear to
+diff --git a/dlls/winemac.drv/cocoa_window.m b/dlls/winemac.drv/cocoa_window.m
+index 65e59e37940..914931958e5 100644
+--- a/dlls/winemac.drv/cocoa_window.m
++++ b/dlls/winemac.drv/cocoa_window.m
+@@ -3502,7 +3502,14 @@ void macdrv_destroy_cocoa_window(macdrv_window w)
+         [window close];
+     });
+     [window.queue discardEventsMatchingMask:-1 forWindow:window];
+-    [window release];
++
++    /* The window's views may only be destroyed on the main thread, and
++       the window's dealloc destroys its frame view, so the release that
++       can be the last one is handed to the main thread. The request that
++       closed the window is already done, so this is ordered after it. */
++    OnMainThreadAsync(^{
++        [window release];
++    });
+ }
+ }
+ 
+diff --git a/dlls/winemac.drv/window.c b/dlls/winemac.drv/window.c
+index 741f7fdaffb..2bf26deeaa7 100644
+--- a/dlls/winemac.drv/window.c
++++ b/dlls/winemac.drv/window.c
+@@ -1323,6 +1323,7 @@ LRESULT macdrv_DesktopWindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+ void macdrv_DestroyWindow(HWND hwnd)
+ {
+     struct macdrv_win_data *data;
++    CFMutableArrayRef d3dmetal_client_surfaces;
+ 
+     TRACE("%p\n", hwnd);
+ 
+@@ -1334,11 +1335,19 @@ void macdrv_DestroyWindow(HWND hwnd)
+     destroy_cocoa_window(data);
+ 
+     /* CW HACK 22435 */
+-    if (data->d3dmetal_client_surfaces) CFRelease(data->d3dmetal_client_surfaces);
++    d3dmetal_client_surfaces = data->d3dmetal_client_surfaces;
++    data->d3dmetal_client_surfaces = NULL;
+ 
+     CFDictionaryRemoveValue(win_datas, hwnd);
+     release_win_data(data);
+     free(data);
++
++    /* Releasing a client surface takes win32u's surface lock, and the other
++     * holders of that lock (detach_client_surfaces, update_client_surfaces)
++     * call back into this driver for the window data, so it must not happen
++     * while the window data is held: two threads, one destroying its window
++     * and one creating, moving or destroying its own, would deadlock. */
++    if (d3dmetal_client_surfaces) CFRelease(d3dmetal_client_surfaces);
+ }
+ 
+ 

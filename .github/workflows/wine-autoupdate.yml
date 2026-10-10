@@ -13,8 +13,8 @@ name: Wine auto-update (watch CrossOver)
 #     fresh POINTER; the actual source we build is still CodeWeavers' own tarball (verified below).
 
 on:
-  schedule:
-    - cron: "0 7 * * 1"   # Mondays 07:00 UTC
+  # No schedule in OneClick: Wine builds carry Scripts/patches/wine and are published under a suffixed tag
+  # (wine-cx-<ver>-ocN), so they are started by hand from build-wine.yml, never on a timer.
   workflow_dispatch:
 
 permissions:

@@ -48,11 +48,19 @@ unit-tested.
 - ⬜ Import highball-db (CC0) game entries.
 - ⬜ Profile editor and "report result" export.
 
-## M5: Hardening ⬜
-- ⬜ This repository's own CI builds of Wine, DXMT and DXVK; move `RUNTIME_GITHUB_REPO` to them.
+## M5: Hardening 🔨
+- 🔨 This repository's own CI build of Wine with `Scripts/patches/wine` (Ubisoft Connect fix, msync leak,
+  click stalls, destroy races, audio buffer), published as `wine-cx-26.3.0-oc1`; then move
+  `WINE_GITHUB_REPO` to it. Manor Lords' known-good runtime is backed up first.
 - ⬜ Runtime auto-update with checksums; no orphaned wineserver after a session.
 - ⬜ Remember a crash-to-DXMT fallback per game.
 - ⬜ Signed and notarized releases (needs an Apple Developer ID).
+
+## Anno 1800 (Steam 916440) 🔨
+- ✅ Downloading in the Steam bottle (47 GB).
+- 🔨 Ubisoft Connect: needs Wine bug 60263's fix (patch 0003) so its browser window renders; try it on
+  D3DMetal first, else DXMT with Highball's `DXMT_ALLOW_CROSS_PROCESS_SWAPCHAIN` opt-in.
+- ⬜ Profile + tuning plan (`docs/games/anno-1800.md`): steady 60 including late-game cities.
 
 ## M6: After Rosetta ⬜
 - ⬜ Keep the engine swappable so an ARM64 Wine (CrossOver ARM64 / upstream) can replace the x86-64
